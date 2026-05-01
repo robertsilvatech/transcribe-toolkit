@@ -25,6 +25,11 @@
 
 set -euo pipefail
 
+# Resolve o diretório do próprio script — necessário pra que `uv run` encontre
+# o projeto mesmo quando o usuário invoca via wrapper (~/.local/bin/transcribe)
+# de uma pasta arbitrária. Sem isso, `uv` procura pyproject.toml no CWD.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 URL=""
 OUT_BASE=""
 USE_API=0
@@ -116,11 +121,11 @@ fi
 if [[ "$FORCE_YT" -eq 1 ]]; then
     YT_ARGS+=(--force)
 fi
-uv run yt-transcribe "${YT_ARGS[@]}"
+uv run --project "$SCRIPT_DIR" yt-transcribe "${YT_ARGS[@]}"
 
 # Resolve OUT_BASE via config se o usuário não passou -o (espelha cascata do CLI).
 if [[ -z "$OUT_BASE" ]]; then
-    OUT_BASE=$(uv run python -c "from yt_transcribe.config import resolve_output_path; print(resolve_output_path(None))")
+    OUT_BASE=$(uv run --project "$SCRIPT_DIR" python -c "from yt_transcribe.config import resolve_output_path; print(resolve_output_path(None))")
 fi
 
 # Subpasta gerada = mais recente em $OUT_BASE (slug é dinâmico, derivado do título).
@@ -136,13 +141,13 @@ else
         echo "⏭  translate: conteúdo já em português ($SRC_LANG), copiando raw.md → raw_pt-br.md"
         cp "$DIR/raw.md" "$DIR/raw_pt-br.md"
     else
-        uv run translate "$DIR/raw.md"
+        uv run --project "$SCRIPT_DIR" translate "$DIR/raw.md"
     fi
 fi
 
 # Etapa 3: vault-import
 SLUG=$(basename "$DIR")
-VAULT=$(uv run python -c "from vault_import.config import resolve_vault_path; print(resolve_vault_path(None))")
+VAULT=$(uv run --project "$SCRIPT_DIR" python -c "from vault_import.config import resolve_vault_path; print(resolve_vault_path(None))")
 if [[ -f "$VAULT/raw/$SLUG.md" && "$FORCE_VAULT_IMPORT" -eq 0 ]]; then
     echo "⏭  vault-import: $VAULT/raw/$SLUG.md já existe, pulando"
 else
@@ -150,5 +155,5 @@ else
     if [[ "$FORCE_VAULT_IMPORT" -eq 1 ]]; then
         VI_ARGS+=(--force)
     fi
-    uv run vault-import "${VI_ARGS[@]}"
+    uv run --project "$SCRIPT_DIR" vault-import "${VI_ARGS[@]}"
 fi
