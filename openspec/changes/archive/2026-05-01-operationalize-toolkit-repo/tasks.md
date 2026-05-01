@@ -55,8 +55,8 @@
 - [ ] 7.2 Validar end-to-end pré-commit: `./run.sh -u <url-teste-curto>` deve usar a nova pasta de output
 - [x] 7.3 Rodar `./setup.sh` na própria máquina pra validar o fluxo
 - [x] 7.4 Validar comando global: `cd ~ && transcribe -h` (deve imprimir help do `run.sh`)
-- [ ] 7.5 `git init` na raiz do projeto
-- [ ] 7.6 Verificar `git status` — confirmar que `.env`, `.venv/`, `out/` (caso ainda exista por engano) NÃO aparecem como untracked
-- [ ] 7.7 `git add .` + `git commit -m "Initial commit: transcribe-toolkit"` (commit message a confirmar com o usuário antes)
-- [ ] 7.8 `gh repo create transcribe-toolkit --private --source=. --remote=origin --push`
+- [x] 7.5 `git init` na raiz do projeto
+- [x] 7.6 Verificar `git status` — confirmar que `.env`, `.venv/`, `out/` (caso ainda exista por engano) NÃO aparecem como untracked
+- [x] 7.7 `git add .` + `git commit -m "Initial commit: transcribe-toolkit"` (commit message a confirmar com o usuário antes)
+- [x] 7.8 `gh repo create transcribe-toolkit --private --source=. --remote=origin --push`
 - [ ] 7.9 Confirmar visualmente no GitHub que o repo foi criado privado e que `.env` não está no histórico
