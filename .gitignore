@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Secrets
+.env
+
+# Claude Code local settings (per-machine allowlist, etc)
+.claude/settings.local.json
+
+# Outputs locais (caso algum dev rode com -o ./out por engano)
+out/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Misc
+*.swp
+*.log

@@ -1,0 +1,31 @@
+[project]
+name = "transcribe-toolkit"
+version = "0.1.0"
+description = "Toolkit modular para transcrição de áudio/vídeo (YouTube hoje, expansível pra outras fontes), com pipeline opcional de tradução via LLM e export pra vault Obsidian"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "yt-dlp>=2024.11.4",
+    "openai>=1.50.0",
+    "anthropic>=0.40.0",
+    "python-dotenv>=1.0.0",
+    "pydub>=0.25.1",
+    "audioop-lts>=0.2.1",
+    "pyyaml>=6.0",
+    "yt-dlp-ejs>=0.8.0",
+]
+
+[project.optional-dependencies]
+local = ["mlx-whisper>=0.4.0"]
+
+[project.scripts]
+yt-transcribe = "yt_transcribe.cli:main"
+translate = "translate.cli:main"
+vault-import = "vault_import.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["yt_transcribe", "translate", "vault_import"]
