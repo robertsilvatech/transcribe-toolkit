@@ -13,6 +13,16 @@ YOUTUBE_VIDEO_ID_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?v=|embed/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})"
 )
 
+DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_")
+
+
+def build_dest_filename(slug: str, prefix: str | None) -> str:
+    """Compose the destination filename. With prefix, strips `YYYY-MM-DD_` from slug."""
+    if not prefix:
+        return f"{slug}.md"
+    cleaned = DATE_PREFIX_RE.sub("", slug)
+    return f"{prefix}_{cleaned}.md"
+
 
 class ImporterError(Exception):
     """Raised when input or destination validation fails, or write conflicts."""
@@ -60,11 +70,22 @@ def validate_input(input_dir: Path) -> dict:
     return meta_data
 
 
-def validate_destination(vault: Path, slug: str, force: bool) -> Path:
+def validate_destination(
+    vault: Path,
+    slug: str,
+    force: bool,
+    subfolder: str | None = None,
+    prefix: str | None = None,
+) -> Path:
     """Validate vault and raw/, return the destination file path.
 
-    Raises ImporterError if vault or raw/ are missing, or if the destination
-    file already exists without force=True.
+    If `subfolder` is provided, the destination becomes `<vault>/raw/<subfolder>/<slug>.md`
+    and the subfolder is created on demand (mkdir -p).
+
+    If `prefix` is provided, the filename becomes `<prefix>_<slug-without-date>.md`.
+
+    Raises ImporterError if vault or raw/ are missing, the subfolder/prefix is invalid,
+    or the destination file already exists without force=True.
     """
     if not vault.exists():
         raise ImporterError(f"Vault path does not exist: {vault}")
@@ -80,7 +101,30 @@ def validate_destination(vault: Path, slug: str, force: bool) -> Path:
     if not raw_dir.is_dir():
         raise ImporterError(f"{raw_dir} exists but is not a directory.")
 
-    dest = raw_dir / f"{slug}.md"
+    dest_dir = raw_dir
+    if subfolder:
+        sub = subfolder.strip().strip("/")
+        if not sub or sub.startswith(".") or "/" in sub or "\\" in sub:
+            raise ImporterError(
+                f"Invalid subfolder name: {subfolder!r}. "
+                "Use a single path segment without slashes or leading dots."
+            )
+        dest_dir = raw_dir / sub
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        if not dest_dir.is_dir():
+            raise ImporterError(f"{dest_dir} exists but is not a directory.")
+
+    if prefix is not None:
+        pfx = prefix.strip()
+        if not pfx or "/" in pfx or "\\" in pfx or pfx.startswith("."):
+            raise ImporterError(
+                f"Invalid prefix: {prefix!r}. "
+                "Use a non-empty string without slashes or leading dots."
+            )
+    else:
+        pfx = None
+
+    dest = dest_dir / build_dest_filename(slug, pfx)
     if dest.exists() and not force:
         raise ImporterError(
             f"Destination already exists: {dest}\n"
@@ -141,8 +185,14 @@ def build_frontmatter(meta: dict, slug: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def import_to_vault(input_dir: Path, vault: Path, force: bool) -> Path:
-    """Validate input + destination, then write `<vault>/raw/<slug>.md` atomically.
+def import_to_vault(
+    input_dir: Path,
+    vault: Path,
+    force: bool,
+    subfolder: str | None = None,
+    prefix: str | None = None,
+) -> Path:
+    """Validate input + destination, then write `<vault>/raw/[<sub>/][<prefix>_]<slug>.md` atomically.
 
     Returns the absolute path of the file written.
     """
@@ -151,7 +201,7 @@ def import_to_vault(input_dir: Path, vault: Path, force: bool) -> Path:
     slug = input_dir.name
 
     meta = validate_input(input_dir)
-    dest = validate_destination(vault, slug, force)
+    dest = validate_destination(vault, slug, force, subfolder, prefix)
 
     body = (input_dir / "raw_pt-br.md").read_text(encoding="utf-8").strip()
     frontmatter = build_frontmatter(meta, slug)

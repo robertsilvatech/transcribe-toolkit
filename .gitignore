@@ -9,11 +9,21 @@ build/
 # Secrets
 .env
 
+# Config local (use config.yaml.example como template)
+config.yaml
+
 # Claude Code local settings (per-machine allowlist, etc)
 .claude/settings.local.json
 
 # Outputs locais (caso algum dev rode com -o ./out por engano)
 out/
+transcricoes/
+
+# Áudio extraído por local_transcribe (sibling do source, se o source estiver no repo)
+*.mp3
+
+# Batch scripts pessoais
+cursos/
 
 # macOS
 .DS_Store

@@ -32,6 +32,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 URL=""
 OUT_BASE=""
+SUBFOLDER=""
+PREFIX=""
 USE_API=0
 BROWSER="${BROWSER:-chrome}"
 FORCE_YT=0
@@ -40,15 +42,19 @@ FORCE_VAULT_IMPORT=0
 
 usage() {
     cat <<EOF
-uso: ./run.sh -u <url> [-o <dir>] [-a] [--force | --force-translate | --force-vault-import]
+uso: ./run.sh -u <url> [-o <dir>] [-s <subfolder>] [-p <prefix>] [-a] [--force | --force-translate | --force-vault-import]
 
 Flags:
   -u, --url <url>         URL do vídeo do YouTube (obrigatório)
   -o, --output <dir>      Diretório base de output (default: yt_transcribe.default_output do config.yaml)
+  -s, --subfolder <name>  Subpasta dentro de raw/ no vault (ex: curso-mastering-devin).
+                          Criada sob demanda. Sem flag, escreve direto em raw/.
+  -p, --prefix <value>    Prefixo do filename (ex: A01, M01A10). Strip do YYYY-MM-DD_ do slug.
+                          Final: raw/[<sub>/]<prefix>_<slug-sem-data>.md
   -a, --api               Usar OpenAI Whisper API (em vez de mlx-whisper local)
   --force                 Re-roda todas as etapas (yt-transcribe + translate + vault-import)
   --force-translate       Re-roda só a etapa 2 (sobrescreve raw_pt-br.md)
-  --force-vault-import    Re-roda só a etapa 3 (sobrescreve <vault>/raw/<slug>.md)
+  --force-vault-import    Re-roda só a etapa 3 (sobrescreve <vault>/raw/[<sub>/][<prefix>_]<slug>.md)
   -h, --help              Mostra esta mensagem
 
 Variáveis de ambiente:
@@ -72,6 +78,22 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             OUT_BASE="$2"
+            shift 2
+            ;;
+        -s|--subfolder)
+            if [[ $# -lt 2 ]]; then
+                echo "Erro: $1 exige um valor" >&2
+                exit 1
+            fi
+            SUBFOLDER="$2"
+            shift 2
+            ;;
+        -p|--prefix)
+            if [[ $# -lt 2 ]]; then
+                echo "Erro: $1 exige um valor" >&2
+                exit 1
+            fi
+            PREFIX="$2"
             shift 2
             ;;
         -a|--api)
@@ -110,6 +132,23 @@ if [[ -z "$URL" ]]; then
     exit 1
 fi
 
+# Detecta se vault está configurado (env var VAULT_PATH > config.yaml).
+# Vazio = vault não configurado → etapa 3 será pulada.
+VAULT=$(uv run --project "$SCRIPT_DIR" python -c "
+try:
+    from vault_import.config import resolve_vault_path
+    print(resolve_vault_path(None))
+except ValueError:
+    pass
+" 2>/dev/null || true)
+
+# Flags vault-specific (-s/-p) exigem vault configurado.
+if [[ -z "$VAULT" ]] && [[ -n "$SUBFOLDER" || -n "$PREFIX" ]]; then
+    echo "Erro: -s/--subfolder e -p/--prefix exigem um vault configurado." >&2
+    echo "       Defina VAULT_PATH no ambiente ou vault_import.default_vault em config.yaml." >&2
+    exit 1
+fi
+
 # Etapa 1: yt-transcribe
 YT_ARGS=("$URL" --cookies-from-browser "$BROWSER")
 if [[ -n "$OUT_BASE" ]]; then
@@ -145,13 +184,35 @@ else
     fi
 fi
 
-# Etapa 3: vault-import
+# Etapa 3: vault-import (opcional — pula se vault não configurado)
+if [[ -z "$VAULT" ]]; then
+    echo "ℹ  vault-import: pulado (vault não configurado). Configure VAULT_PATH ou vault_import.default_vault em config.yaml para habilitar."
+    exit 0
+fi
+
 SLUG=$(basename "$DIR")
-VAULT=$(uv run --project "$SCRIPT_DIR" python -c "from vault_import.config import resolve_vault_path; print(resolve_vault_path(None))")
-if [[ -f "$VAULT/raw/$SLUG.md" && "$FORCE_VAULT_IMPORT" -eq 0 ]]; then
-    echo "⏭  vault-import: $VAULT/raw/$SLUG.md já existe, pulando"
+if [[ -n "$PREFIX" ]]; then
+    # Strip YYYY-MM-DD_ do slug pra casar com a lógica do importer
+    SLUG_NO_DATE=$(echo "$SLUG" | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}_//')
+    FILENAME="${PREFIX}_${SLUG_NO_DATE}.md"
+else
+    FILENAME="${SLUG}.md"
+fi
+if [[ -n "$SUBFOLDER" ]]; then
+    DEST="$VAULT/raw/$SUBFOLDER/$FILENAME"
+else
+    DEST="$VAULT/raw/$FILENAME"
+fi
+if [[ -f "$DEST" && "$FORCE_VAULT_IMPORT" -eq 0 ]]; then
+    echo "⏭  vault-import: $DEST já existe, pulando"
 else
     VI_ARGS=("$DIR")
+    if [[ -n "$SUBFOLDER" ]]; then
+        VI_ARGS+=(--subfolder "$SUBFOLDER")
+    fi
+    if [[ -n "$PREFIX" ]]; then
+        VI_ARGS+=(--prefix "$PREFIX")
+    fi
     if [[ "$FORCE_VAULT_IMPORT" -eq 1 ]]; then
         VI_ARGS+=(--force)
     fi

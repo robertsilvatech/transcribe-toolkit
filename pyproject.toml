@@ -20,6 +20,7 @@ local = ["mlx-whisper>=0.4.0"]
 
 [project.scripts]
 yt-transcribe = "yt_transcribe.cli:main"
+local-transcribe = "local_transcribe.cli:main"
 translate = "translate.cli:main"
 vault-import = "vault_import.cli:main"
 
@@ -28,4 +29,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["yt_transcribe", "translate", "vault_import"]
+packages = ["transcribe_core", "yt_transcribe", "local_transcribe", "translate", "vault_import"]

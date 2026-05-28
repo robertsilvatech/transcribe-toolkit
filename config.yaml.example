@@ -1,0 +1,36 @@
+# config.yaml.example — template de configuração.
+# Setup automatizado: ./setup.sh copia este arquivo para config.yaml se não existir.
+# Manual: `cp config.yaml.example config.yaml` e edite com seus paths.
+#
+# Cascata de resolução por path:
+#   CLI flag > env var > config.yaml > erro
+# Env vars suportadas: YT_TRANSCRIBE_OUTPUT, LOCAL_TRANSCRIBE_OUTPUT, VAULT_PATH
+
+# yt_transcribe: ingestion module for YouTube videos.
+# default_output: where transcriptions are saved (subfolder per video).
+yt_transcribe:
+  default_output: ~/Documents/transcribe-toolkit/youtube
+
+# local_transcribe: ingestion module for local media files (.mp4/.mov/.mkv/.m4a/.mp3/.wav).
+# default_output: base directory where transcription subfolders are created.
+# Used with --subfolder <name> the tree of --dir is mirrored inside <default_output>/<name>/.
+local_transcribe:
+  default_output: ~/Documents/transcribe-toolkit/local
+
+translate:
+  default_provider: anthropic
+  target_language: pt-br
+
+  providers:
+    openai:
+      model: gpt-4.1-mini
+      api_key_env: OPENAI_API_KEY
+    anthropic:
+      model: claude-sonnet-4-6
+      api_key_env: ANTHROPIC_API_KEY
+
+# vault_import: optional bridge to an Obsidian/Karpathy-LLM-Wiki vault.
+# If null/absent, `run.sh` skips the vault-import step (only yt-transcribe + translate run).
+# Set to the absolute path (or ~/...) of your destination vault to enable.
+vault_import:
+  default_vault: null

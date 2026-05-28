@@ -1,22 +1,10 @@
 import json
-import re
 import tempfile
-import unicodedata
 from pathlib import Path
 
 import yt_dlp
 
-
-def _slugify(text: str, max_len: int = 60) -> str:
-    """Converte título em slug seguro para nome de pasta."""
-    # Normaliza unicode e remove acentos
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    text = text.lower()
-    # Substitui qualquer char não alfanumérico por hífen
-    text = re.sub(r"[^a-z0-9]+", "-", text)
-    text = text.strip("-")
-    return text[:max_len].rstrip("-")
+from transcribe_core import slugify
 
 
 def download_audio(
@@ -89,7 +77,7 @@ def make_output_folder_name(title: str) -> str:
     from datetime import date
 
     today = date.today().isoformat()
-    slug = _slugify(title)
+    slug = slugify(title)
     return f"{today}_{slug}"
 
 
@@ -129,7 +117,7 @@ def find_existing_transcription(
     Critério: pasta contém `raw.md` e `meta.json` cujo `url` casa com `url`.
     Retorna o Path da pasta mais recente que casa, ou None.
     """
-    slug = _slugify(title)
+    slug = slugify(title)
     candidates = sorted(output_dir.glob(f"*_{slug}"), reverse=True)
     for candidate in candidates:
         if not candidate.is_dir():

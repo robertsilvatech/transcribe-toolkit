@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yt_dlp
 
+from transcribe_core import save_outputs, transcribe
+
 from .config import resolve_output_path
 from .downloader import (
     download_audio,
@@ -12,8 +14,6 @@ from .downloader import (
     get_video_metadata,
     make_output_folder_name,
 )
-from .formatter import save_outputs
-from .transcriber import transcribe
 
 
 def _load_env():
@@ -135,6 +135,7 @@ def main():
             sys.exit(1)
 
         title = metadata.get("title") or "video"
+        metadata["source"] = "youtube"
         print(f"✓  Download concluído: {title}")
 
         # Validação: --no-ffmpeg + --api + áudio grande

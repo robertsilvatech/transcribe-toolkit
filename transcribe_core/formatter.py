@@ -25,7 +25,9 @@ def save_outputs(
         output_dir: Diretório base configurado via --output
         folder_name: Nome da pasta (YYYY-MM-DD_slug)
         result: Resposta verbose do Whisper (text, segments, language)
-        metadata: Dict com title, channel, url, duration_seconds, language
+        metadata: Dict com campos da origem (ex: title, source, url, channel,
+            source_path, duration_seconds, language). Propagado verbatim para
+            meta.json, exceto `language` que é resolvido pelo result.
         model_used: String identificando o modelo/engine usado
 
     Returns:
@@ -56,16 +58,11 @@ def save_outputs(
         encoding="utf-8",
     )
 
-    # meta.json — metadata do vídeo + info de transcrição
-    meta = {
-        "title": metadata.get("title", ""),
-        "channel": metadata.get("channel", ""),
-        "url": metadata.get("url", ""),
-        "duration_seconds": metadata.get("duration_seconds", 0),
-        "language": language,
-        "transcribed_at": datetime.now(timezone.utc).isoformat(),
-        "model_used": model_used,
-    }
+    # meta.json — propaga metadata da origem + adiciona campos da transcrição
+    meta = dict(metadata)
+    meta["language"] = language
+    meta["transcribed_at"] = datetime.now(timezone.utc).isoformat()
+    meta["model_used"] = model_used
     (dest / "meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2),
         encoding="utf-8",

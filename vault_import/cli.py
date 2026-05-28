@@ -28,6 +28,18 @@ def main():
         help="Destination vault path (overrides config.yaml's vault_import.default_vault)",
     )
     parser.add_argument(
+        "-s", "--subfolder",
+        metavar="NAME",
+        help="Subfolder inside raw/ to write into (e.g. 'curso-mastering-devin'). "
+        "Created on demand. Without this flag, writes directly to raw/.",
+    )
+    parser.add_argument(
+        "-p", "--prefix",
+        metavar="VALUE",
+        help="Prefix prepended to the filename, e.g. 'A01' or 'M01A10'. "
+        "Strips the YYYY-MM-DD_ from the slug. Final: <prefix>_<slug-no-date>.md",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite the destination file if it already exists",
@@ -45,9 +57,15 @@ def main():
 
     print(f"📖  Input:  {input_dir}")
     print(f"📁  Vault:  {vault}")
+    if args.subfolder:
+        print(f"📂  Subfolder: raw/{args.subfolder}/")
+    if args.prefix:
+        print(f"🔖  Prefix: {args.prefix}")
 
     try:
-        dest = import_to_vault(input_dir, vault, args.force)
+        dest = import_to_vault(
+            input_dir, vault, args.force, args.subfolder, args.prefix
+        )
     except ImporterError as e:
         print(f"\nErro: {e}", file=sys.stderr)
         sys.exit(1)

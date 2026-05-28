@@ -1,4 +1,4 @@
-"""Config loader for yt_transcribe — reads `yt_transcribe:` section of config.yaml."""
+"""Config loader for local_transcribe — reads `local_transcribe:` section of config.yaml."""
 
 import os
 from pathlib import Path
@@ -6,22 +6,22 @@ from pathlib import Path
 import yaml
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
-ENV_VAR = "YT_TRANSCRIBE_OUTPUT"
+ENV_VAR = "LOCAL_TRANSCRIBE_OUTPUT"
 
 
 def _load_config() -> dict:
-    """Return the yt_transcribe: section of config.yaml, or {} if absent."""
+    """Return the local_transcribe: section of config.yaml, or {} if absent."""
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH) as f:
             data = yaml.safe_load(f) or {}
-        return data.get("yt_transcribe", {})
+        return data.get("local_transcribe", {})
     return {}
 
 
 def resolve_output_path(cli_output: str | None) -> Path:
     """Resolve the base output directory for transcriptions.
 
-    Cascade: CLI flag > env var YT_TRANSCRIBE_OUTPUT > config.yaml `default_output` > raise.
+    Cascade: CLI flag > env var LOCAL_TRANSCRIBE_OUTPUT > config.yaml `default_output` > raise.
     Tilde (`~`) is expanded; the path is resolved to an absolute path.
     """
     cfg = _load_config()
@@ -31,6 +31,6 @@ def resolve_output_path(cli_output: str | None) -> Path:
         raise ValueError(
             "No output path provided. Pass --output <dir>, "
             f"export {ENV_VAR}=<dir>, or set "
-            "yt_transcribe.default_output in config.yaml."
+            "local_transcribe.default_output in config.yaml."
         )
     return Path(raw).expanduser().resolve()
