@@ -58,6 +58,16 @@ tasks:
     cmds:
       - uv run local-transcribe --api --force {{.CLI_ARGS}}
 
+  transcribe-local-batch:
+    desc: 'Lote: varre uma pasta recursivamente e transcreve TUDO (multilang). Pula os já feitos. Uso: task transcribe-local-batch -- "/caminho/pasta"'
+    cmds:
+      - uv run local-transcribe --model {{.MODEL}} --multilang --trim-silence {{.TRIM}} --dir {{.CLI_ARGS}}
+
+  transcribe-local-batch-pt:
+    desc: 'Lote forçando PT (~2x mais rápido). Pula os já feitos. Uso: task transcribe-local-batch-pt -- "/caminho/pasta"'
+    cmds:
+      - uv run local-transcribe --model {{.MODEL}} --language pt --trim-silence {{.TRIM}} --dir {{.CLI_ARGS}}
+
   # ─── Transcrição YouTube ──────────────────────────────────────────────────
 
   transcribe-yt:
