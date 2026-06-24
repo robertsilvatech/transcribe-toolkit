@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 
 from transcribe_core import save_outputs, slugify, transcribe
+from transcribe_core.silence import shift_segments, trim_leading_trailing_silence
 
 from .config import resolve_output_path
 from .extractor import SUPPORTED_EXTS, ExtractorError, extract_audio
@@ -124,6 +125,7 @@ def _process_one(
     engine: str,
     language: str | None = None,
     multilang: bool = False,
+    trim_silence_minutes: float | None = None,
 ) -> tuple[str, str]:
     """Process a single input. Returns (status, detail) where status is
     'ok' | 'skip' | 'error'.
@@ -143,9 +145,35 @@ def _process_one(
     except ExtractorError as e:
         return ("error", str(e))
 
+    leading_offset_seconds = 0.0
+    transcription_audio_path = audio_path
+    if trim_silence_minutes is not None and not use_api:
+        # API path tem chunking próprio e custo de I/O na rede; aplicamos o trim
+        # apenas no caminho local (mlx-whisper), onde o benefício é maior
+        # (evita decodificar horas de silêncio).
+        try:
+            trim_result = trim_leading_trailing_silence(
+                audio_path,
+                min_silence_seconds=trim_silence_minutes * 60.0,
+            )
+        except subprocess.CalledProcessError as e:
+            return ("error", f"Falha ao cortar silêncio com ffmpeg: {e}")
+        leading_offset_seconds = trim_result.leading_offset_seconds
+        transcription_audio_path = trim_result.audio_path
+        cut_total = (
+            trim_result.original_duration_seconds
+            - trim_result.trimmed_duration_seconds
+        )
+        if cut_total > 0:
+            print(
+                f"    [trim] cortado {cut_total / 60.0:.1f}min de silêncio "
+                f"({trim_result.original_duration_seconds / 60.0:.1f}min "
+                f"→ {trim_result.trimmed_duration_seconds / 60.0:.1f}min)"
+            )
+
     try:
         result = transcribe(
-            audio_path,
+            transcription_audio_path,
             use_api=use_api,
             model=model,
             language=language,
@@ -155,6 +183,12 @@ def _process_one(
         return ("error", str(e))
     except Exception as e:
         return ("error", f"Erro durante a transcrição: {e}")
+
+    # Mapeia os timestamps de volta pro tempo original do vídeo (somando o
+    # silêncio inicial cortado). Os timestamps do meio/fim já estão corretos
+    # porque preservamos silêncios intermediários no trim.
+    if leading_offset_seconds > 0:
+        shift_segments(result, leading_offset_seconds)
 
     duration = _audio_duration_seconds(audio_path)
     metadata = {
@@ -251,6 +285,22 @@ def main():
         ),
     )
     parser.add_argument(
+        "--trim-silence",
+        nargs="?",
+        const=10.0,
+        type=float,
+        default=None,
+        metavar="MINUTES",
+        help=(
+            "Corta silêncio inicial e/ou final maior que MINUTES (default: 10 "
+            "quando a flag é usada sem valor). Útil pra gravações de reunião "
+            "onde ninguém parou a gravação (ex: KT de 1h30 em vídeo de 4h). "
+            "Silêncios intermediários são preservados — timestamps do "
+            "raw_timestamps.md continuam batendo com o tempo original do "
+            "vídeo. Ignorado com --api."
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Re-transcreve mesmo se transcrição existente for encontrada.",
@@ -321,6 +371,7 @@ def main():
             engine,
             language=args.language,
             multilang=args.multilang,
+            trim_silence_minutes=args.trim_silence,
         )
         stats[status] += 1
         if status == "ok":

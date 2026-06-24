@@ -1,0 +1,106 @@
+# Taskfile (https://taskfile.dev) — atalhos pros comandos mais usados.
+#
+# Pré-requisito: `brew install go-task`.
+# Uso: `task` lista tudo, `task <nome>` executa.
+#
+# Pra passar um arquivo como argumento posicional, use `--`:
+#   task transcribe-local -- '/caminho/do/video.mp4'
+#   task transcribe-yt -- 'https://youtube.com/watch?v=...'
+#
+# Pra overridar variáveis nomeadas:
+#   task convert-model NAME=medium
+#   task transcribe-local TRIM=15 -- '/caminho/do/video.mp4'
+
+version: '3'
+
+vars:
+  MODEL: large-v3
+  TRIM: 10  # minutos mínimos de silêncio nas bordas pra cortar
+
+tasks:
+  default:
+    desc: Lista todas as tarefas disponíveis
+    cmds:
+      - task --list-all
+    silent: true
+
+  # ─── Setup / instalação ────────────────────────────────────────────────────
+
+  setup:
+    desc: 'Roda ./setup.sh (config.yaml + .env + uv sync + wrappers em ~/.local/bin). Idempotente.'
+    cmds:
+      - ./setup.sh
+
+  install-local:
+    desc: 'Instala mlx-whisper no venv (extra "local"). Necessário pra transcrição local em Apple Silicon.'
+    cmds:
+      - uv sync --extra local
+
+  # ─── Transcrição local (arquivos .mp4/.mov/.mp3/etc) ──────────────────────
+
+  transcribe-local:
+    desc: 'Arquivo local: multilang (PT/EN/ES) + trim de silêncio + large-v3. Uso: task transcribe-local -- "<arquivo>"'
+    cmds:
+      - uv run local-transcribe --model {{.MODEL}} --multilang --trim-silence {{.TRIM}} --force {{.CLI_ARGS}}
+
+  transcribe-local-pt:
+    desc: 'Arquivo local forçando PT (single-pass, ~2x mais rápido). Uso: task transcribe-local-pt -- "<arquivo>"'
+    cmds:
+      - uv run local-transcribe --model {{.MODEL}} --language pt --trim-silence {{.TRIM}} --force {{.CLI_ARGS}}
+
+  transcribe-local-fast:
+    desc: 'Arquivo local com modelo tiny (teste rápido, qualidade ruim). Uso: task transcribe-local-fast -- "<arquivo>"'
+    cmds:
+      - uv run local-transcribe --model tiny --multilang --trim-silence {{.TRIM}} --force {{.CLI_ARGS}}
+
+  transcribe-local-api:
+    desc: 'Arquivo local via OpenAI Whisper API (precisa OPENAI_API_KEY). Uso: task transcribe-local-api -- "<arquivo>"'
+    cmds:
+      - uv run local-transcribe --api --force {{.CLI_ARGS}}
+
+  # ─── Transcrição YouTube ──────────────────────────────────────────────────
+
+  transcribe-yt:
+    desc: 'YouTube URL com large-v3. Uso: task transcribe-yt -- "<url>"'
+    cmds:
+      - uv run yt-transcribe --model {{.MODEL}} --force {{.CLI_ARGS}}
+
+  transcribe-yt-api:
+    desc: 'YouTube URL via OpenAI Whisper API (precisa OPENAI_API_KEY). Uso: task transcribe-yt-api -- "<url>"'
+    cmds:
+      - uv run yt-transcribe --api --force {{.CLI_ARGS}}
+
+  # ─── Modelos ───────────────────────────────────────────────────────────────
+
+  convert-model:
+    desc: 'Converte modelo Whisper .pt → MLX. Baixa do Azure se não tiver no cache. Uso: task convert-model NAME=large-v3'
+    requires:
+      vars: [NAME]
+    cmds:
+      - uv run python ~/mlx-examples/whisper/convert.py --torch-name-or-path {{.NAME}} --mlx-path ~/mlx-models/whisper-{{.NAME}}-mlx --dtype float16
+      - ls -lh ~/mlx-models/whisper-{{.NAME}}-mlx/
+
+  list-models:
+    desc: 'Lista modelos MLX disponíveis (convertidos manualmente + cache HF)'
+    cmds:
+      - 'echo "── Modelos convertidos em ~/mlx-models/ ──"'
+      - ls -lh ~/mlx-models/ 2>/dev/null || echo "  (vazio)"
+      - 'echo ""'
+      - 'echo "── Modelos no cache do Hugging Face ──"'
+      - ls -d ~/.cache/huggingface/hub/models--mlx-community--whisper-* 2>/dev/null || echo "  (nenhum)"
+    silent: true
+
+  # ─── Manutenção ────────────────────────────────────────────────────────────
+
+  clean-trim:
+    desc: 'Remove arquivos .trimmed.mp3 temporários de /tmp/'
+    cmds:
+      - rm -f /tmp/*.trimmed.mp3
+      - 'echo "/tmp/*.trimmed.mp3 limpo."'
+
+  save:
+    desc: 'git add -A + commit + push em um comando. Uso: task save -- "mensagem do commit"'
+    cmds:
+      - git add -A
+      - git commit -m {{shellQuote .CLI_ARGS}}
+      - git push
