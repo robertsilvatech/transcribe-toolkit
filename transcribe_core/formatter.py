@@ -43,12 +43,21 @@ def save_outputs(
     raw_text = result.get("text", "").strip()
     (dest / "raw.md").write_text(raw_text, encoding="utf-8")
 
-    # raw_timestamps.md — cada segmento prefixado com [HH:MM:SS]
+    # raw_timestamps.md — cada segmento prefixado com [HH:MM:SS] e, no modo
+    # multilang, [<lang>]. A marcação de idioma só aparece quando o segmento
+    # tem o campo `language` (transcribe_core preenche apenas no modo chunked
+    # com re-detecção por janela), permitindo revisar visualmente trocas de
+    # idioma em reuniões mistas (PT/EN/ES).
     lines = []
     for seg in segments:
         ts = _seconds_to_hms(seg.get("start", 0))
         text = seg.get("text", "").strip()
-        if text:
+        if not text:
+            continue
+        seg_lang = seg.get("language")
+        if seg_lang:
+            lines.append(f"[{ts}] [{seg_lang}] {text}")
+        else:
             lines.append(f"[{ts}] {text}")
     (dest / "raw_timestamps.md").write_text("\n".join(lines), encoding="utf-8")
 

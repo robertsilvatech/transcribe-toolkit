@@ -122,6 +122,8 @@ def _process_one(
     model: str,
     force: bool,
     engine: str,
+    language: str | None = None,
+    multilang: bool = False,
 ) -> tuple[str, str]:
     """Process a single input. Returns (status, detail) where status is
     'ok' | 'skip' | 'error'.
@@ -142,7 +144,13 @@ def _process_one(
         return ("error", str(e))
 
     try:
-        result = transcribe(audio_path, use_api=use_api, model=model)
+        result = transcribe(
+            audio_path,
+            use_api=use_api,
+            model=model,
+            language=language,
+            multilang=multilang,
+        )
     except (ImportError, EnvironmentError) as e:
         return ("error", str(e))
     except Exception as e:
@@ -211,7 +219,36 @@ def main():
         "--model",
         default="medium",
         metavar="MODEL",
-        help="Modelo mlx-whisper a usar (padrão: medium). Ignorado com --api.",
+        help=(
+            "Modelo mlx-whisper a usar. Pode ser um nome curto "
+            "('tiny', 'base', 'small', 'medium', 'large-v3') OU um caminho "
+            "para um diretório local de modelo MLX já convertido. "
+            "Padrão: medium. Ignorado com --api."
+        ),
+    )
+    lang_group = parser.add_mutually_exclusive_group()
+    lang_group.add_argument(
+        "--language",
+        default=None,
+        metavar="CODE",
+        help=(
+            "Força o idioma do áudio (código ISO-639-1: 'pt', 'en', 'es', etc). "
+            "Sem essa flag, o Whisper detecta automaticamente nos primeiros 30s "
+            "e mantém o idioma na chamada inteira. Útil quando você sabe o "
+            "idioma e quer evitar erros de detecção. Ignorado com --api. "
+            "Mutuamente exclusivo com --multilang."
+        ),
+    )
+    lang_group.add_argument(
+        "--multilang",
+        action="store_true",
+        help=(
+            "Modo chunked com re-detecção de idioma por janela de 30s. Útil "
+            "para reuniões com troca de idiomas no meio (PT/EN/ES). Cada "
+            "segmento ganha marcação [<lang>] no raw_timestamps.md. "
+            "Mais lento que single-pass. Ignorado com --api. "
+            "Mutuamente exclusivo com --language."
+        ),
     )
     parser.add_argument(
         "--force",
@@ -246,7 +283,14 @@ def main():
         print("Nenhum arquivo de mídia suportado encontrado.", file=sys.stderr)
         sys.exit(1)
 
-    engine = "openai-whisper-api" if args.api else f"mlx-whisper/{args.model}"
+    if args.api:
+        engine = "openai-whisper-api"
+    else:
+        engine = f"mlx-whisper/{args.model}"
+        if args.multilang:
+            engine += "+multilang"
+        elif args.language:
+            engine += f"+lang={args.language}"
 
     sub = args.subfolder.strip().strip("/") if args.subfolder else None
     if sub and ("/" in sub or "\\" in sub or sub.startswith(".")):
@@ -269,7 +313,14 @@ def main():
 
         print(f"[{i}/{total}] {source.name}")
         status, detail = _process_one(
-            source, target_dir, args.api, args.model, args.force, engine
+            source,
+            target_dir,
+            args.api,
+            args.model,
+            args.force,
+            engine,
+            language=args.language,
+            multilang=args.multilang,
         )
         stats[status] += 1
         if status == "ok":

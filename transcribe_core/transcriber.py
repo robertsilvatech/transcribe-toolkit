@@ -16,15 +16,162 @@ def _file_size_mb(path: Path) -> float:
     return path.stat().st_size / (1024 * 1024)
 
 
-def _transcribe_local(audio_path: Path, model: str) -> dict:
+def _normalize_mlx_model_dir(model_dir: Path) -> None:
+    """Garante que o diretório de modelo MLX tenha um arquivo de pesos com o
+    nome esperado pelo `mlx_whisper.load_models.load_model`
+    (`weights.safetensors` ou `weights.npz`).
+
+    Versões recentes do `convert.py` (mlx-examples) salvam os pesos como
+    `model.safetensors`. Quando só existe esse arquivo, criamos um symlink
+    relativo `weights.safetensors -> model.safetensors` pra evitar renomeação
+    manual a cada modelo convertido.
+    """
+    if (model_dir / "weights.safetensors").exists() or (model_dir / "weights.npz").exists():
+        return
+    legacy = model_dir / "model.safetensors"
+    if legacy.exists():
+        try:
+            (model_dir / "weights.safetensors").symlink_to(legacy.name)
+        except FileExistsError:
+            pass
+
+
+def _resolve_mlx_repo(model: str) -> str:
+    """Resolve `model` (nome curto ou caminho local) para o argumento
+    `path_or_hf_repo` esperado pelo mlx-whisper."""
+    model_dir = Path(model).expanduser()
+    if model_dir.is_dir():
+        _normalize_mlx_model_dir(model_dir)
+        return str(model_dir)
+    return f"mlx-community/whisper-{model}-mlx"
+
+
+def _transcribe_local(
+    audio_path: Path,
+    model: str,
+    language: str | None = None,
+    multilang: bool = False,
+) -> dict:
+    """Single-pass: detecta (ou força) um idioma e transcreve a chamada inteira
+    nele. Se `multilang=True`, despacha para a versão chunked que re-detecta o
+    idioma por janela (útil para reuniões com troca de PT/EN/ES no meio).
+    """
+    if multilang:
+        return _transcribe_local_chunked(audio_path, model)
+
     import mlx_whisper
+
+    # `model` pode ser um nome curto (ex: 'medium', 'large-v3') OU um caminho
+    # para um diretório local de modelo MLX já convertido (config.json +
+    # weights.{safetensors,npz}). Útil em redes que bloqueiam o Hugging Face.
+    path_or_hf_repo = _resolve_mlx_repo(model)
 
     result = mlx_whisper.transcribe(
         str(audio_path),
-        path_or_hf_repo=f"mlx-community/whisper-{model}-mlx",
+        path_or_hf_repo=path_or_hf_repo,
         verbose=True,
+        # Anti-alucinação em trechos silenciosos: sem isso o Whisper entra em
+        # loops repetindo frases do treino (ex.: "Legenda Adriana Zanotto") porque
+        # cada janela vê o contexto da anterior e se realimenta.
+        condition_on_previous_text=False,
+        # `language=None` deixa o Whisper detectar o idioma nos primeiros 30s.
+        # Passar "pt"/"en"/"es" força e melhora qualidade quando você sabe.
+        language=language,
     )
     return result
+
+
+def _format_chunk_time(seconds: float) -> str:
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def _transcribe_local_chunked(
+    audio_path: Path,
+    model: str,
+    chunk_seconds: int = 30,
+) -> dict:
+    """Transcrição com detecção de idioma **por janela** (não trava o idioma na
+    chamada inteira). Quebra o áudio em janelas de `chunk_seconds` (default 30s,
+    mesmo tamanho da janela interna do Whisper), roda transcribe em cada uma com
+    `language=None` (forçando re-detecção) e concatena os `segments` com offsets
+    corretos.
+
+    Cada segmento retornado ganha um campo `language` (código ISO-639-1) que o
+    formatter usa para anotar `[pt]/[en]/[es]` no `raw_timestamps.md`. O campo
+    top-level `language` retorna o idioma **dominante** por duração agregada.
+    """
+    import mlx_whisper
+    from mlx_whisper import audio as mlx_audio
+
+    SAMPLE_RATE = 16000  # mlx_whisper.audio.SAMPLE_RATE
+    audio = mlx_audio.load_audio(str(audio_path))
+    total_samples = len(audio)
+    if total_samples == 0:
+        return {"text": "", "segments": [], "language": None}
+
+    chunk_samples = chunk_seconds * SAMPLE_RATE
+    chunks_total = (total_samples + chunk_samples - 1) // chunk_samples
+    path_or_hf_repo = _resolve_mlx_repo(model)
+
+    all_segments: list[dict] = []
+    text_parts: list[str] = []
+    duration_per_lang: dict[str, float] = {}
+
+    print(f"  [multilang] {chunks_total} janelas de {chunk_seconds}s")
+    for idx, start in enumerate(range(0, total_samples, chunk_samples)):
+        end = min(start + chunk_samples, total_samples)
+        chunk = audio[start:end]
+        offset = start / SAMPLE_RATE
+        chunk_dur = (end - start) / SAMPLE_RATE
+
+        result = mlx_whisper.transcribe(
+            chunk,
+            path_or_hf_repo=path_or_hf_repo,
+            verbose=False,  # ruidoso demais com N janelas; usamos nossa progress line
+            condition_on_previous_text=False,
+            language=None,  # re-detecta por janela — esse é o ponto do modo multilang
+        )
+
+        lang = result.get("language")
+        print(
+            f"    [{idx + 1:>{len(str(chunks_total))}}/{chunks_total}] "
+            f"{_format_chunk_time(offset)}-{_format_chunk_time(end / SAMPLE_RATE)}  "
+            f"lang={lang or '?'}"
+        )
+
+        duration_per_lang[lang or ""] = duration_per_lang.get(lang or "", 0.0) + chunk_dur
+
+        for seg in result.get("segments", []):
+            seg_out = dict(seg)
+            seg_out["start"] = seg.get("start", 0.0) + offset
+            seg_out["end"] = seg.get("end", 0.0) + offset
+            if lang:
+                seg_out["language"] = lang
+            all_segments.append(seg_out)
+
+        chunk_text = (result.get("text") or "").strip()
+        if chunk_text:
+            text_parts.append(chunk_text)
+
+    # idioma dominante = maior duração agregada
+    dominant = None
+    if duration_per_lang:
+        dominant = max(
+            (lang for lang in duration_per_lang if lang),
+            key=lambda l: duration_per_lang[l],
+            default=None,
+        )
+
+    return {
+        "text": " ".join(text_parts).strip(),
+        "segments": all_segments,
+        "language": dominant,
+    }
 
 
 def _transcribe_api(audio_path: Path) -> dict:
@@ -109,7 +256,13 @@ def _transcribe_api_chunked(audio_path: Path, client) -> dict:
     }
 
 
-def transcribe(audio_path: Path, use_api: bool = False, model: str = "medium") -> dict:
+def transcribe(
+    audio_path: Path,
+    use_api: bool = False,
+    model: str = "medium",
+    language: str | None = None,
+    multilang: bool = False,
+) -> dict:
     """
     Transcreve o áudio e retorna verbose JSON com segments.
 
@@ -117,6 +270,13 @@ def transcribe(audio_path: Path, use_api: bool = False, model: str = "medium") -
         audio_path: Caminho para o arquivo de áudio .mp3
         use_api: Se True, usa OpenAI Whisper API. Caso contrário, mlx-whisper local.
         model: Modelo mlx-whisper (ex: 'medium', 'large-v3'). Ignorado com --api.
+        language: Código de idioma ISO-639-1 (ex: 'pt', 'en', 'es') para forçar
+            o idioma. None deixa o Whisper detectar nos primeiros 30s. Ignorado
+            com --api (a API detecta automaticamente) e com `multilang=True`.
+        multilang: Se True, ativa modo chunked com re-detecção de idioma por
+            janela de 30s. Útil para reuniões com troca de idiomas no meio
+            (PT/EN/ES). Cada segmento recebe um campo `language`. Mutuamente
+            exclusivo com `language`. Ignorado com --api.
 
     Returns:
         dict com keys: text, segments (list com start/end/text), language
@@ -131,4 +291,9 @@ def transcribe(audio_path: Path, use_api: bool = False, model: str = "medium") -
             "Ou use a flag --api para transcrever via OpenAI Whisper API."
         )
 
-    return _transcribe_local(audio_path, model)
+    return _transcribe_local(
+        audio_path,
+        model,
+        language=language,
+        multilang=multilang,
+    )
