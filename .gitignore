@@ -24,6 +24,7 @@ transcricoes/
 
 # Batch scripts pessoais
 cursos/
+tmp/
 
 # macOS
 .DS_Store

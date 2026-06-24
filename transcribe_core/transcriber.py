@@ -22,7 +22,7 @@ def _transcribe_local(audio_path: Path, model: str) -> dict:
     result = mlx_whisper.transcribe(
         str(audio_path),
         path_or_hf_repo=f"mlx-community/whisper-{model}-mlx",
-        verbose=False,
+        verbose=True,
     )
     return result
 
