@@ -4,6 +4,33 @@ from pathlib import Path
 MAX_API_SIZE_MB = 24  # margem de segurança abaixo do limite de 25MB da OpenAI
 
 
+# Parâmetros anti-alucinação para mlx_whisper.transcribe.
+#
+# Whisper, em trechos silenciosos/musicais, costuma "preencher" com frases muito
+# frequentes no treino (ex.: "Legenda Adriana Zanotto" em datasets pt-br de
+# legendas, "Thanks for watching" em en, "♪♪♪" em música). Os defaults da
+# openai-whisper não filtram essas alucinações de forma confiável.
+#
+# - `condition_on_previous_text=False`: cada janela de 30s decodifica de zero,
+#   sem ver o texto da anterior. Evita que uma alucinação puxe a próxima (loop
+#   em cadeia repetindo a mesma frase por minutos).
+# - `no_speech_threshold=0.4` (default 0.6): janela é marcada como silêncio
+#   quando `no_speech_prob > 0.4` (mais agressivo → mais janelas silenciosas
+#   detectadas).
+# - `logprob_threshold=-0.5` (default −1.0): se a decodificação tem
+#   `avg_logprob < −0.5` (baixa confiança), a janela é descartada mesmo que o
+#   `no_speech_prob` esteja alto. Pega alucinações "confiantes" em silêncio.
+#
+# Trade-off: pode descartar fala genuína muito baixinha. Pra gravações de
+# reunião com fala clara isso é aceitável; pra áudio sussurrado pode dropar
+# falsos positivos.
+_ANTI_HALLUCINATION_KWARGS = {
+    "condition_on_previous_text": False,
+    "no_speech_threshold": 0.4,
+    "logprob_threshold": -0.5,
+}
+
+
 def _check_mlx_whisper() -> bool:
     try:
         import mlx_whisper  # noqa: F401
@@ -70,13 +97,10 @@ def _transcribe_local(
         str(audio_path),
         path_or_hf_repo=path_or_hf_repo,
         verbose=True,
-        # Anti-alucinação em trechos silenciosos: sem isso o Whisper entra em
-        # loops repetindo frases do treino (ex.: "Legenda Adriana Zanotto") porque
-        # cada janela vê o contexto da anterior e se realimenta.
-        condition_on_previous_text=False,
         # `language=None` deixa o Whisper detectar o idioma nos primeiros 30s.
         # Passar "pt"/"en"/"es" força e melhora qualidade quando você sabe.
         language=language,
+        **_ANTI_HALLUCINATION_KWARGS,
     )
     return result
 
@@ -133,8 +157,8 @@ def _transcribe_local_chunked(
             chunk,
             path_or_hf_repo=path_or_hf_repo,
             verbose=False,  # ruidoso demais com N janelas; usamos nossa progress line
-            condition_on_previous_text=False,
             language=None,  # re-detecta por janela — esse é o ponto do modo multilang
+            **_ANTI_HALLUCINATION_KWARGS,
         )
 
         lang = result.get("language")
