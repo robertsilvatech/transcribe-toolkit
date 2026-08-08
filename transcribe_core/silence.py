@@ -195,8 +195,9 @@ def trim_leading_trailing_silence(
 
 def shift_segments(result: dict, offset_seconds: float) -> None:
     """Soma `offset_seconds` aos campos `start`/`end` de todos os segmentos
-    (in-place). Usado depois de transcrever áudio com leading silence cortado
-    pra que os timestamps batam com o vídeo original.
+    e das words de cada segmento (in-place). Usado depois de transcrever áudio
+    com leading silence cortado pra que os timestamps batam com o vídeo
+    original.
     """
     if offset_seconds == 0:
         return
@@ -205,3 +206,8 @@ def shift_segments(result: dict, offset_seconds: float) -> None:
             seg["start"] = seg["start"] + offset_seconds
         if "end" in seg:
             seg["end"] = seg["end"] + offset_seconds
+        for w in seg.get("words") or []:
+            if "start" in w:
+                w["start"] = w["start"] + offset_seconds
+            if "end" in w:
+                w["end"] = w["end"] + offset_seconds

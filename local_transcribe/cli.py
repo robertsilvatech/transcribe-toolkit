@@ -47,13 +47,19 @@ def _audio_duration_seconds(audio_path: Path) -> int:
 
 
 def _find_existing(target_dir: Path, slug: str, source_abs: str) -> Path | None:
-    """Procura subpasta `*_<slug>` em `target_dir` com `meta.json["source_path"] == source_abs`.
+    """Procura subpasta `*_<slug>` (layout com data) ou `<slug>` (layout
+    --no-date) em `target_dir` com `meta.json["source_path"] == source_abs`.
 
     Retorna o Path da subpasta mais recente que casa, ou None.
     """
     if not target_dir.is_dir():
         return None
     candidates = sorted(target_dir.glob(f"*_{slug}"), reverse=True)
+    # layout --no-date: pasta com o slug puro (o glob `*_{slug}` nunca casa
+    # com ela, então não há risco de candidato duplicado)
+    exact = target_dir / slug
+    if exact.is_dir():
+        candidates.append(exact)
     for candidate in candidates:
         if not candidate.is_dir():
             continue
@@ -126,6 +132,8 @@ def _process_one(
     language: str | None = None,
     multilang: bool = False,
     trim_silence_minutes: float | None = None,
+    no_date: bool = False,
+    word_timestamps: bool = False,
 ) -> tuple[str, str]:
     """Process a single input. Returns (status, detail) where status is
     'ok' | 'skip' | 'error'.
@@ -178,6 +186,7 @@ def _process_one(
             model=model,
             language=language,
             multilang=multilang,
+            word_timestamps=word_timestamps,
         )
     except (ImportError, EnvironmentError) as e:
         return ("error", str(e))
@@ -198,8 +207,12 @@ def _process_one(
         "duration_seconds": duration,
         "language": result.get("language"),
     }
+    if word_timestamps:
+        # registro pra auditoria: só aparece quando a flag foi usada, pra não
+        # mudar o shape do meta.json das transcrições existentes
+        metadata["word_timestamps"] = True
 
-    folder_name = f"{date.today().isoformat()}_{slug}"
+    folder_name = slug if no_date else f"{date.today().isoformat()}_{slug}"
     target_dir.mkdir(parents=True, exist_ok=True)
     dest = save_outputs(target_dir, folder_name, result, metadata, engine)
     return ("ok", str(dest))
@@ -301,6 +314,36 @@ def main():
         ),
     )
     parser.add_argument(
+        "--no-date",
+        action="store_true",
+        help=(
+            "Nomeia a pasta de output apenas com o slug do arquivo "
+            "(ex: 'aula01/' em vez de '2026-08-08_aula01/'). Útil pra "
+            "materiais de curso onde a data de transcrição não agrega."
+        ),
+    )
+    parser.add_argument(
+        "--word-timestamps",
+        action="store_true",
+        help=(
+            "Grava timestamps por palavra dentro de cada segmento no "
+            "raw_whisper.json (segments[i].words). Funciona no engine local "
+            "E com --api (na API adiciona latência à chamada). raw.md e "
+            "raw_timestamps.md não mudam."
+        ),
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Para depois de transcrever N arquivos (skips não contam). "
+            "Útil pra testar 1 aula antes de rodar um lote inteiro: "
+            "--dir ~/curso --limit 1."
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Re-transcreve mesmo se transcrição existente for encontrada.",
@@ -351,8 +394,13 @@ def main():
         )
         sys.exit(1)
 
+    if args.limit is not None and args.limit < 1:
+        print("Erro: --limit deve ser >= 1.", file=sys.stderr)
+        sys.exit(2)
+
     total = len(inputs)
     stats = {"ok": 0, "skip": 0, "error": 0}
+    processed = 0  # transcrições efetivas (ok/error) — skips não contam pro --limit
 
     for i, (source, rel_dir) in enumerate(inputs, 1):
         target_dir = output_base
@@ -372,6 +420,8 @@ def main():
             language=args.language,
             multilang=args.multilang,
             trim_silence_minutes=args.trim_silence,
+            no_date=args.no_date,
+            word_timestamps=args.word_timestamps,
         )
         stats[status] += 1
         if status == "ok":
@@ -380,6 +430,14 @@ def main():
             print(f"    ⏭  já transcrito: {detail}")
         else:
             print(f"    ✗ {detail}", file=sys.stderr)
+
+        if status != "skip":
+            processed += 1
+            if args.limit is not None and processed >= args.limit:
+                remaining = total - i
+                print(f"\n[limit] --limit {args.limit} atingido, parando "
+                      f"({remaining} arquivo(s) restante(s) na fila).")
+                break
 
     print()
     print(

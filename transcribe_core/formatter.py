@@ -23,7 +23,7 @@ def save_outputs(
 
     Args:
         output_dir: Diretório base configurado via --output
-        folder_name: Nome da pasta (YYYY-MM-DD_slug)
+        folder_name: Nome da pasta (YYYY-MM-DD_slug, ou só o slug com --no-date)
         result: Resposta verbose do Whisper (text, segments, language)
         metadata: Dict com campos da origem (ex: title, source, url, channel,
             source_path, duration_seconds, language). Propagado verbatim para

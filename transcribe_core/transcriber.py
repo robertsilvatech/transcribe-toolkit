@@ -78,13 +78,16 @@ def _transcribe_local(
     model: str,
     language: str | None = None,
     multilang: bool = False,
+    word_timestamps: bool = False,
 ) -> dict:
     """Single-pass: detecta (ou força) um idioma e transcreve a chamada inteira
     nele. Se `multilang=True`, despacha para a versão chunked que re-detecta o
     idioma por janela (útil para reuniões com troca de PT/EN/ES no meio).
     """
     if multilang:
-        return _transcribe_local_chunked(audio_path, model)
+        return _transcribe_local_chunked(
+            audio_path, model, word_timestamps=word_timestamps
+        )
 
     import mlx_whisper
 
@@ -100,6 +103,9 @@ def _transcribe_local(
         # `language=None` deixa o Whisper detectar o idioma nos primeiros 30s.
         # Passar "pt"/"en"/"es" força e melhora qualidade quando você sabe.
         language=language,
+        # Com word_timestamps=True o mlx grava segments[i]["words"] e reajusta
+        # o start/end de cada segment pros bounds da primeira/última word.
+        word_timestamps=word_timestamps,
         **_ANTI_HALLUCINATION_KWARGS,
     )
     return result
@@ -118,6 +124,7 @@ def _transcribe_local_chunked(
     audio_path: Path,
     model: str,
     chunk_seconds: int = 30,
+    word_timestamps: bool = False,
 ) -> dict:
     """Transcrição com detecção de idioma **por janela** (não trava o idioma na
     chamada inteira). Quebra o áudio em janelas de `chunk_seconds` (default 30s,
@@ -158,6 +165,7 @@ def _transcribe_local_chunked(
             path_or_hf_repo=path_or_hf_repo,
             verbose=False,  # ruidoso demais com N janelas; usamos nossa progress line
             language=None,  # re-detecta por janela — esse é o ponto do modo multilang
+            word_timestamps=word_timestamps,
             **_ANTI_HALLUCINATION_KWARGS,
         )
 
@@ -174,6 +182,13 @@ def _transcribe_local_chunked(
             seg_out = dict(seg)
             seg_out["start"] = seg.get("start", 0.0) + offset
             seg_out["end"] = seg.get("end", 0.0) + offset
+            if seg.get("words"):
+                # words vêm relativas ao chunk — soma o offset copiando cada
+                # word (dict(seg) é shallow; mutar aqui contaminaria o original)
+                seg_out["words"] = [
+                    {**w, "start": w["start"] + offset, "end": w["end"] + offset}
+                    for w in seg["words"]
+                ]
             if lang:
                 seg_out["language"] = lang
             all_segments.append(seg_out)
@@ -198,7 +213,30 @@ def _transcribe_local_chunked(
     }
 
 
-def _transcribe_api(audio_path: Path) -> dict:
+def _distribute_api_words(result: dict) -> None:
+    """Distribui a lista top-level `words` da API (verbose_json com
+    granularidade word) para dentro de cada segment, casando por janela de
+    tempo (word.start < seg.end; o último segment recebe o resto). Remove a
+    chave top-level após distribuir, normalizando pro mesmo shape do mlx
+    (`segments[i]["words"]`). Se `segments` ou `words` vierem vazios/ausentes,
+    não faz nada (mantém o fallback top-level). In-place.
+    """
+    words = result.get("words")
+    segments = result.get("segments")
+    if not words or not segments:
+        return
+    wi, n = 0, len(words)
+    last = len(segments) - 1
+    for i, seg in enumerate(segments):
+        seg_words = []
+        while wi < n and (i == last or words[wi]["start"] < seg["end"]):
+            seg_words.append(dict(words[wi]))
+            wi += 1
+        seg["words"] = seg_words  # sempre presente (lista vazia em silêncio)
+    result.pop("words", None)
+
+
+def _transcribe_api(audio_path: Path, word_timestamps: bool = False) -> dict:
     from openai import OpenAI
 
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -212,18 +250,32 @@ def _transcribe_api(audio_path: Path) -> dict:
 
     size_mb = _file_size_mb(audio_path)
     if size_mb > MAX_API_SIZE_MB:
-        return _transcribe_api_chunked(audio_path, client)
+        return _transcribe_api_chunked(
+            audio_path, client, word_timestamps=word_timestamps
+        )
+
+    extra_kwargs = {}
+    if word_timestamps:
+        # granularidade word tem custo de latência na API; só pedimos com a
+        # flag. "segment" junto pra não perder os segments do verbose_json.
+        extra_kwargs["timestamp_granularities"] = ["word", "segment"]
 
     with open(audio_path, "rb") as f:
         response = client.audio.transcriptions.create(
             model="whisper-1",
             file=f,
             response_format="verbose_json",
+            **extra_kwargs,
         )
-    return response.model_dump()
+    result = response.model_dump()
+    if word_timestamps:
+        _distribute_api_words(result)
+    return result
 
 
-def _transcribe_api_chunked(audio_path: Path, client) -> dict:
+def _transcribe_api_chunked(
+    audio_path: Path, client, word_timestamps: bool = False
+) -> dict:
     """Divide o áudio em chunks < 25MB, transcreve cada um e concatena."""
     from pydub import AudioSegment
 
@@ -246,14 +298,25 @@ def _transcribe_api_chunked(audio_path: Path, client) -> dict:
         chunk_path = audio_path.parent / f"chunk_{chunk_index:03d}.mp3"
         chunk.export(str(chunk_path), format="mp3", bitrate="64k")
 
+        extra_kwargs = {}
+        if word_timestamps:
+            extra_kwargs["timestamp_granularities"] = ["word", "segment"]
+
         try:
             with open(chunk_path, "rb") as f:
                 response = client.audio.transcriptions.create(
                     model="whisper-1",
                     file=f,
                     response_format="verbose_json",
+                    **extra_kwargs,
                 )
             result = response.model_dump()
+
+            if word_timestamps:
+                # normaliza ANTES do offset: words e segments ainda no mesmo
+                # referencial (relativo ao chunk). Chunk sem segments é caso
+                # degenerado — o fallback top-level é descartado no concat.
+                _distribute_api_words(result)
 
             if language is None:
                 language = result.get("language")
@@ -264,6 +327,17 @@ def _transcribe_api_chunked(audio_path: Path, client) -> dict:
                 adjusted = dict(seg)
                 adjusted["start"] = seg["start"] + offset_s
                 adjusted["end"] = seg["end"] + offset_s
+                if seg.get("words"):
+                    # mesmo cuidado do modo multilang: copia as words somando
+                    # o offset (dict(seg) é shallow)
+                    adjusted["words"] = [
+                        {
+                            **w,
+                            "start": w["start"] + offset_s,
+                            "end": w["end"] + offset_s,
+                        }
+                        for w in seg["words"]
+                    ]
                 segments_all.append(adjusted)
 
             # Duração real do chunk para ajustar offset
@@ -286,6 +360,7 @@ def transcribe(
     model: str = "medium",
     language: str | None = None,
     multilang: bool = False,
+    word_timestamps: bool = False,
 ) -> dict:
     """
     Transcreve o áudio e retorna verbose JSON com segments.
@@ -301,12 +376,17 @@ def transcribe(
             janela de 30s. Útil para reuniões com troca de idiomas no meio
             (PT/EN/ES). Cada segmento recebe um campo `language`. Mutuamente
             exclusivo com `language`. Ignorado com --api.
+        word_timestamps: Se True, grava timestamps por palavra dentro de cada
+            segment (`segments[i]["words"] = [{word, start, end, probability?}]`).
+            Funciona no engine local (mlx) E na API (`probability` só existe no
+            mlx). Na API adiciona latência à chamada. Nota: no mlx, o start/end
+            de cada segment é reajustado pros bounds da primeira/última word.
 
     Returns:
         dict com keys: text, segments (list com start/end/text), language
     """
     if use_api:
-        return _transcribe_api(audio_path)
+        return _transcribe_api(audio_path, word_timestamps=word_timestamps)
 
     if not _check_mlx_whisper():
         raise ImportError(
@@ -320,4 +400,5 @@ def transcribe(
         model,
         language=language,
         multilang=multilang,
+        word_timestamps=word_timestamps,
     )
