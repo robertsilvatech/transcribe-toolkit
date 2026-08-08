@@ -26,7 +26,7 @@ translate:
       model: gpt-4.1-mini
       api_key_env: OPENAI_API_KEY
     anthropic:
-      model: claude-sonnet-4-6
+      model: claude-sonnet-5
       api_key_env: ANTHROPIC_API_KEY
 
 # vault_import: optional bridge to an Obsidian/Karpathy-LLM-Wiki vault.
@@ -34,3 +34,16 @@ translate:
 # Set to the absolute path (or ~/...) of your destination vault to enable.
 vault_import:
   default_vault: null
+
+# study_material: gera material didático (tópicos/subtópicos) a partir de raw.md.
+# Output: study.md ao lado do input. Cascata: CLI flags > config.yaml > fallback.
+study_material:
+  default_provider: anthropic
+
+  providers:
+    openai:
+      model: gpt-4.1-mini
+      api_key_env: OPENAI_API_KEY
+    anthropic:
+      model: claude-sonnet-5
+      api_key_env: ANTHROPIC_API_KEY
