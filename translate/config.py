@@ -11,7 +11,7 @@ DEFAULTS = {
             "api_key_env": "OPENAI_API_KEY",
         },
         "anthropic": {
-            "model": "claude-sonnet-4-6",
+            "model": "claude-sonnet-5",
             "api_key_env": "ANTHROPIC_API_KEY",
         },
     },

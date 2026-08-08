@@ -46,10 +46,11 @@ def _translate_anthropic(text: str, model: str, target_lang: str, api_key: str) 
 
     max_tokens = 64000
     client = Anthropic(api_key=api_key)
+    # Nota: sem `temperature` — modelos Claude Sonnet 5+ rejeitam valores
+    # não-default de temperature/top_p/top_k com erro 400.
     with client.messages.stream(
         model=model,
         max_tokens=max_tokens,
-        temperature=0,
         system=SYSTEM_PROMPT.format(target_lang=target_lang),
         messages=[
             {"role": "user", "content": text},
@@ -62,7 +63,9 @@ def _translate_anthropic(text: str, model: str, target_lang: str, api_key: str) 
             f"com input de {len(text):,} caracteres. "
             "Vídeo provavelmente excede ~3h e precisa ser quebrado em pedaços menores."
         )
-    content = response.content[0].text
+    # Com thinking adaptativo (default no Sonnet 5+), content[0] pode ser um
+    # ThinkingBlock — pega o primeiro bloco de texto.
+    content = next((b.text for b in response.content if b.type == "text"), "")
     if not content or not content.strip():
         raise RuntimeError("Resposta vazia da API Anthropic.")
     return content
