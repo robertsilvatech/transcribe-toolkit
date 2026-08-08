@@ -198,17 +198,28 @@ uv run local-transcribe aula01.mp4 --api
 
 # Forçar re-transcrição (não re-extrai .mp3)
 uv run local-transcribe aula01.mp4 --force
+
+# Pasta de output sem prefixo de data (só o slug do arquivo) — útil pra cursos
+uv run local-transcribe --dir ~/curso --no-date
+
+# Timestamps por palavra no raw_whisper.json (funciona também com --api)
+uv run local-transcribe call.mp4 --word-timestamps
+
+# Testar: transcreve só N arquivos e para (skips não contam — rodadas seguintes continuam de onde parou)
+uv run local-transcribe --dir ~/curso --limit 1
 ```
 
 Extensões aceitas: `.mp4`, `.mov`, `.mkv` (vídeo, extrai áudio via ffmpeg), `.m4a`, `.mp3`, `.wav` (áudio, sem extração). Output base resolvido na ordem: flag `--output` > env var `LOCAL_TRANSCRIBE_OUTPUT` > `config.yaml` (`local_transcribe.default_output`) > erro explícito.
 
 Áudio extraído fica como `.mp3` sibling do source (ex: `aula01.mp4` → `aula01.mp3`). Cacheado: se `.mp3` já existe, reusa sem invocar ffmpeg. `--force` re-transcreve mas NÃO re-extrai. Pasta de source read-only → erro claro (sem fallback automático para /tmp).
 
-Skip automático: procura subpasta `*_<slug>/meta.json` cujo `source_path` casa com o caminho absoluto do arquivo. Use `--force` pra ignorar.
+Skip automático: procura subpasta `*_<slug>/meta.json` (layout com data) ou `<slug>/meta.json` (layout `--no-date`) cujo `source_path` casa com o caminho absoluto do arquivo. Use `--force` pra ignorar.
+
+`--word-timestamps` grava timestamps por palavra em `segments[i].words` no `raw_whisper.json` e marca `word_timestamps: true` no `meta.json`.
 
 Output:
 ```
-<output>/[<subfolder>/]<rel-path>/YYYY-MM-DD_slug/
+<output>/[<subfolder>/]<rel-path>/YYYY-MM-DD_slug/    # ou <slug>/ com --no-date
 ├── raw.md
 ├── raw_timestamps.md
 ├── raw_whisper.json
@@ -243,6 +254,27 @@ Pra traduzir usando o próprio Claude (sem custo de API se você tem plano Max):
 
 Requer Claude Code (CLI ou VSCode extension).
 
+### study-material — transcrição → material didático via LLM
+
+```bash
+# Arquivo único → study.md ao lado do input
+uv run study-material ~/curso/transcriptions/aula01/raw.md
+
+# Batch: varre recursivamente por raw.md, pula os que já têm study.md
+uv run study-material --dir ~/curso/transcriptions
+
+# Testar 1 aula antes do lote inteiro
+uv run study-material --dir ~/curso/transcriptions --limit 1
+
+# Overrides
+uv run study-material raw.md --provider openai --model gpt-4.1-mini
+uv run study-material raw.md --force
+```
+
+Transforma a transcrição bruta em documento de estudo Markdown: tópicos/subtópicos numerados, cada conceito técnico como subtópico autossuficiente, blocos de código dos comandos citados, e destaques 💡 dica / ⚠️ erro comum / 🗣️ relato do professor. O system prompt fica em `study_material/prompt.md` — edite à vontade sem tocar em código.
+
+Output: `study.md` na mesma pasta do input. Config em `config.yaml`, seção `study_material:`.
+
 ### vault-import — texto traduzido → vault destino (opcional)
 
 Bridge opcional pra um vault Karpathy-LLM-Wiki (Second Brain pessoal em Obsidian, por exemplo). Lê o `raw_pt-br.md` + `meta.json` de uma pasta de transcrição e escreve um único `<vault>/raw/<slug>.md` com frontmatter rico (title, url, channel, duration, language, youtube_video_id, ingested, tags).
@@ -269,6 +301,13 @@ Output: arquivo único em `<vault>/raw/<slug>.md` (slug = nome basename da pasta
 Manual trigger only — sem auto-export, sem watch. Você decide quando exportar.
 
 **Vault desabilitado:** se você não usa Obsidian/vault, simplesmente deixe `vault_import.default_vault: null` no `config.yaml` (default do `config.yaml.example`). O `transcribe` e o `transcribe-local` continuam funcionando — apenas pulam a etapa 3.
+
+## Runbooks
+
+Procedimentos operacionais passo-a-passo (pré-checagens, teste com 1 aula, lote, verificação, troubleshooting) em [runbooks/](runbooks/):
+
+- [01 — Transcrição de curso EAD](runbooks/01-transcricao-curso.md)
+- [02 — Material didático (study.md)](runbooks/02-material-didatico.md)
 
 ## Configuração
 

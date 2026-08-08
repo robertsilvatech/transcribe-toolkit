@@ -27,11 +27,18 @@ translate/         # módulo: texto → tradução via LLM
 ├── config.py
 └── translator.py
 
+study_material/    # módulo: raw.md → material didático organizado via LLM
+├── cli.py
+├── config.py
+├── generator.py
+└── prompt.md          # system prompt (tópicos/subtópicos, dicas, erros comuns)
+
 vault_import/      # módulo: pasta transcrita → vault destino (bridge, YouTube-only por enquanto)
 ├── cli.py
 ├── config.py
 └── importer.py
 
+runbooks/          # procedimentos passo-a-passo (transcrição de curso, material didático)
 config.yaml        # config do projeto, cada módulo lê sua seção
 pyproject.toml     # entry points pra todos os módulos
 ```
@@ -44,6 +51,7 @@ pyproject.toml     # entry points pra todos os módulos
 - Se a feature é sobre transcrição de arquivos de mídia locais (.mp4/.mov/.mkv/.m4a/.mp3/.wav) → `local_transcribe/`
 - Se a feature é lógica de transcrição/formatação compartilhada entre múltiplos ingestores → `transcribe_core/`
 - Se a feature é sobre tradução de texto → `translate/`
+- Se a feature é sobre gerar material didático a partir de transcrições → `study_material/`
 - Se a feature é sobre exportar transcrições para um vault Karpathy-LLM-Wiki → `vault_import/`
 - Se a feature é algo diferente (insights, RAG, Q&A) → criar nova pasta na raiz
 
@@ -82,17 +90,24 @@ uv run local-transcribe --dir ~/curso                         # recursivo
 uv run local-transcribe --dir ~/curso --subfolder curso-x     # espelha árvore em <out>/curso-x/...
 uv run local-transcribe aula01.mp4 --api                      # OpenAI Whisper API
 uv run local-transcribe aula01.mp4 --force                    # re-transcreve (não re-extrai .mp3)
+uv run local-transcribe --dir ~/curso --no-date               # pasta sem prefixo de data (só o slug)
+uv run local-transcribe call.mp4 --word-timestamps            # timestamps por palavra no raw_whisper.json
+uv run local-transcribe --dir ~/curso --limit 1               # testa 1 aula e para (skips não contam)
 ```
 
 Extensões aceitas: `.mp4`, `.mov`, `.mkv` (vídeo, extrai áudio via ffmpeg), `.m4a`, `.mp3`, `.wav` (áudio, sem extração).
 
 Áudio extraído: `aula01.mp4` → `aula01.mp3` ao lado do source. Cacheado: se `.mp3` já existe, reusa. `--force` re-transcreve mas NÃO re-extrai. Pasta de source read-only → erro claro (sem fallback automático para /tmp).
 
-Skip automático: procura subpasta `*_<slug>/meta.json` cujo `source_path` casa com o caminho absoluto do arquivo. Use `--force` para ignorar.
+Skip automático: procura subpasta `*_<slug>/meta.json` (layout com data) ou `<slug>/meta.json` (layout `--no-date`) cujo `source_path` casa com o caminho absoluto do arquivo. Use `--force` para ignorar.
+
+`--no-date`: nomeia a pasta de output só com o slug do arquivo (ex: `aula01/` em vez de `2026-08-08_aula01/`). Útil pra materiais de curso.
+
+`--word-timestamps`: grava timestamps por palavra em `segments[i].words` no `raw_whisper.json` (`{word, start, end, probability?}` — `probability` só no engine local). Funciona no engine local E com `--api`. `raw.md` e `raw_timestamps.md` não mudam. Marca `word_timestamps: true` no `meta.json`.
 
 Output:
 ```
-<out>/[<sub>/]<rel-path>/YYYY-MM-DD_slug/
+<out>/[<sub>/]<rel-path>/YYYY-MM-DD_slug/    # ou <slug>/ com --no-date
 ├── raw.md
 ├── raw_timestamps.md
 ├── raw_whisper.json
@@ -113,6 +128,20 @@ uv run translate raw.md --target-lang es               # override idioma
 Output: `raw_<lang>.md` na mesma pasta do input.
 
 Config em `config.yaml`, seção `translate:`. Cascata: CLI flags > config.yaml > fallback hardcoded.
+
+### study_material
+
+```bash
+uv run study-material raw.md                          # arquivo único → study.md ao lado
+uv run study-material --dir <curso>/transcriptions    # batch: varre por raw.md, pula os que já têm study.md
+uv run study-material --dir ... --limit 1             # testa 1 e para
+uv run study-material raw.md --provider openai        # override provider
+uv run study-material raw.md --force                  # re-gera
+```
+
+Transforma transcrição bruta em documento de estudo Markdown (tópicos/subtópicos numerados, cada conceito técnico como subtópico autossuficiente, blocos de código, destaques 💡 dica / ⚠️ erro comum / 🗣️ relato do professor). System prompt em `study_material/prompt.md` — editável sem tocar em código.
+
+Output: `study.md` na mesma pasta do input. Config em `config.yaml`, seção `study_material:`. Cascata: CLI flags > config.yaml > fallback hardcoded.
 
 ## Pipeline end-to-end (run.sh)
 

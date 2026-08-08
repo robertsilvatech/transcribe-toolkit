@@ -21,7 +21,7 @@
 #   2) translate           — pula se raw_pt-br.md já existe na subpasta.
 #   3) vault-import        — pula se <vault>/raw/<slug>.md já existe.
 # Para qualquer cenário customizado (--api, --target-lang, --vault, etc.),
-# usar os comandos individuais (ver AGENT.md / README.md).
+# usar os comandos individuais (ver AGENTS.md / README.md).
 
 set -euo pipefail
 
