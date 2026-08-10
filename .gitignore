@@ -14,6 +14,7 @@ config.yaml
 
 # Claude Code local settings (per-machine allowlist, etc)
 .claude/settings.local.json
+.claude/settings.json
 
 # Outputs locais (caso algum dev rode com -o ./out por engano)
 out/
