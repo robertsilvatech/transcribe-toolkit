@@ -4,6 +4,8 @@ import argparse
 import json
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
 
@@ -344,6 +346,17 @@ def main():
         ),
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Transcreve até N arquivos em paralelo. Só faz sentido com --api "
+            "(limitado por rede); o engine local (mlx) compartilha a GPU e "
+            "roda sequencial. Ex: --dir ~/curso --api --workers 10."
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Re-transcreve mesmo se transcrição existente for encontrada.",
@@ -398,19 +411,31 @@ def main():
         print("Erro: --limit deve ser >= 1.", file=sys.stderr)
         sys.exit(2)
 
+    if args.workers < 1:
+        print("Erro: --workers deve ser >= 1.", file=sys.stderr)
+        sys.exit(2)
+    workers = args.workers
+    if workers > 1 and not args.api:
+        print(
+            "[workers] engine local (mlx) compartilha a GPU — paralelismo não "
+            "ajuda; usando --workers 1. Use --api pra paralelizar."
+        )
+        workers = 1
+
     total = len(inputs)
     stats = {"ok": 0, "skip": 0, "error": 0}
-    processed = 0  # transcrições efetivas (ok/error) — skips não contam pro --limit
 
-    for i, (source, rel_dir) in enumerate(inputs, 1):
+    jobs = []
+    for source, rel_dir in inputs:
         target_dir = output_base
         if sub:
             target_dir = target_dir / sub
         if str(rel_dir) and str(rel_dir) != ".":
             target_dir = target_dir / rel_dir
+        jobs.append((source, target_dir))
 
-        print(f"[{i}/{total}] {source.name}")
-        status, detail = _process_one(
+    def _run(source: Path, target_dir: Path) -> tuple[str, str]:
+        return _process_one(
             source,
             target_dir,
             args.api,
@@ -423,21 +448,96 @@ def main():
             no_date=args.no_date,
             word_timestamps=args.word_timestamps,
         )
-        stats[status] += 1
-        if status == "ok":
-            print(f"    ✓ {detail}")
-        elif status == "skip":
-            print(f"    ⏭  já transcrito: {detail}")
-        else:
-            print(f"    ✗ {detail}", file=sys.stderr)
 
-        if status != "skip":
-            processed += 1
-            if args.limit is not None and processed >= args.limit:
-                remaining = total - i
-                print(f"\n[limit] --limit {args.limit} atingido, parando "
-                      f"({remaining} arquivo(s) restante(s) na fila).")
-                break
+    if workers > 1:
+        # Resolve skips ANTES de paralelizar: é barato (só lê meta.json) e
+        # preserva a semântica do --limit (N transcrições efetivas).
+        pending = []
+        for source, target_dir in jobs:
+            existing = None
+            if not args.force:
+                existing = _find_existing(
+                    target_dir, slugify(source.stem), str(source)
+                )
+            if existing:
+                existing.touch()
+                stats["skip"] += 1
+                print(f"⏭  já transcrito: {existing}")
+            else:
+                pending.append((source, target_dir))
+
+        if args.limit is not None and len(pending) > args.limit:
+            print(
+                f"[limit] --limit {args.limit}: processando {args.limit} de "
+                f"{len(pending)} pendentes."
+            )
+            pending = pending[: args.limit]
+
+        if pending:
+            print(
+                f"[workers] {len(pending)} arquivo(s), até {workers} em paralelo",
+                flush=True,
+            )
+
+        def _run_announced(source: Path, target_dir: Path) -> tuple[str, str, float]:
+            # marca o início na hora que o worker pega o arquivo — sem isso a
+            # saída fica muda até a primeira transcrição terminar
+            print(f"▶  {source.name}", flush=True)
+            t0 = time.monotonic()
+            status, detail = _run(source, target_dir)
+            return status, detail, time.monotonic() - t0
+
+        done = 0
+        total_pending = len(pending)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_run_announced, source, target_dir): source
+                for source, target_dir in pending
+            }
+            for future in as_completed(futures):
+                source = futures[future]
+                done += 1
+                try:
+                    status, detail, elapsed = future.result()
+                except Exception as e:  # falha inesperada no worker
+                    status, detail, elapsed = "error", str(e), 0.0
+                stats[status] += 1
+                if status == "ok":
+                    print(
+                        f"[{done}/{total_pending}] ✓ {source.name} "
+                        f"({elapsed:.0f}s) → {detail}",
+                        flush=True,
+                    )
+                elif status == "skip":
+                    print(
+                        f"[{done}/{total_pending}] ⏭  {source.name}: já transcrito",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[{done}/{total_pending}] ✗ {source.name}: {detail}",
+                        file=sys.stderr,
+                    )
+    else:
+        processed = 0  # transcrições efetivas (ok/error) — skips não contam pro --limit
+        for i, (source, target_dir) in enumerate(jobs, 1):
+            print(f"[{i}/{total}] {source.name}")
+            status, detail = _run(source, target_dir)
+            stats[status] += 1
+            if status == "ok":
+                print(f"    ✓ {detail}")
+            elif status == "skip":
+                print(f"    ⏭  já transcrito: {detail}")
+            else:
+                print(f"    ✗ {detail}", file=sys.stderr)
+
+            if status != "skip":
+                processed += 1
+                if args.limit is not None and processed >= args.limit:
+                    remaining = total - i
+                    print(f"\n[limit] --limit {args.limit} atingido, parando "
+                          f"({remaining} arquivo(s) restante(s) na fila).")
+                    break
 
     print()
     print(
