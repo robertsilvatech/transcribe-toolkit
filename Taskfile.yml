@@ -15,8 +15,12 @@
 #   NODATE=1  → pasta de output sem prefixo de data (só o slug do arquivo)
 #   WORDS=1   → timestamps por palavra no raw_whisper.json (segments[i].words)
 #   LIMIT=N   → (lote/curso) para depois de N transcrições — teste com LIMIT=1
+#   WORKERS=N → (tasks *-api) transcreve até N arquivos em paralelo
+#   SRCDIR=x  → (tasks *-course*) subpasta dos vídeos dentro do curso (default: videos)
 #   task transcribe-local-batch-api NODATE=1 -- '/caminho/pasta'
 #   task transcribe-course-api LIMIT=1 -- '/caminho/do/curso'
+#   task transcribe-course-api WORKERS=10 -- '/caminho/do/curso'
+#   task transcribe-course-api SRCDIR=aulas-editadas -- '/caminho/curso-gravado'
 
 version: '3'
 
@@ -78,24 +82,24 @@ tasks:
   transcribe-local-batch-api:
     desc: 'Lote via OpenAI Whisper API (precisa OPENAI_API_KEY). Pula os já feitos — sem --force, pra não pagar duas vezes. Uso: task transcribe-local-batch-api -- "/caminho/pasta"'
     cmds:
-      - uv run local-transcribe --api {{if .NODATE}}--no-date {{end}}{{if .WORDS}}--word-timestamps {{end}}{{if .LIMIT}}--limit {{.LIMIT}} {{end}}--dir {{.CLI_ARGS}}
+      - uv run local-transcribe --api {{if .NODATE}}--no-date {{end}}{{if .WORDS}}--word-timestamps {{end}}{{if .LIMIT}}--limit {{.LIMIT}} {{end}}{{if .WORKERS}}--workers {{.WORKERS}} {{end}}--dir {{.CLI_ARGS}}
 
   # ─── Cursos EAD (convenção do downloader: <curso>/videos + <curso>/transcriptions) ──
 
   transcribe-course-api:
-    desc: 'Curso EAD via API: transcreve <curso>/videos/ → <curso>/transcriptions/, sem data no nome. Pula os já feitos. Uso: task transcribe-course-api -- "/caminho/do/curso"'
+    desc: 'Curso via API: transcreve <curso>/<SRCDIR>/ → <curso>/transcriptions/, sem data no nome. SRCDIR default: videos (curso gravado: SRCDIR=aulas-editadas). Uso: task transcribe-course-api [SRCDIR=pasta] -- "/caminho/do/curso"'
     cmds:
-      - uv run local-transcribe --api --no-date {{if .WORDS}}--word-timestamps {{end}}{{if .LIMIT}}--limit {{.LIMIT}} {{end}}--dir "{{.CLI_ARGS}}/videos" --output "{{.CLI_ARGS}}/transcriptions"
+      - uv run local-transcribe --api --no-date {{if .WORDS}}--word-timestamps {{end}}{{if .LIMIT}}--limit {{.LIMIT}} {{end}}{{if .WORKERS}}--workers {{.WORKERS}} {{end}}--dir "{{.CLI_ARGS}}/{{default "videos" .SRCDIR}}" --output "{{.CLI_ARGS}}/transcriptions"
 
   transcribe-course:
-    desc: 'Curso EAD via mlx local (PT, large-v3): <curso>/videos/ → <curso>/transcriptions/, sem data. Uso: task transcribe-course -- "/caminho/do/curso"'
+    desc: 'Curso via mlx local (PT, large-v3): <curso>/<SRCDIR>/ → <curso>/transcriptions/, sem data. SRCDIR default: videos. Uso: task transcribe-course [SRCDIR=pasta] -- "/caminho/do/curso"'
     cmds:
-      - uv run local-transcribe --model {{.MODEL}} --language pt --no-date {{if .WORDS}}--word-timestamps {{end}}{{if .LIMIT}}--limit {{.LIMIT}} {{end}}--dir "{{.CLI_ARGS}}/videos" --output "{{.CLI_ARGS}}/transcriptions"
+      - uv run local-transcribe --model {{.MODEL}} --language pt --no-date {{if .WORDS}}--word-timestamps {{end}}{{if .LIMIT}}--limit {{.LIMIT}} {{end}}--dir "{{.CLI_ARGS}}/{{default "videos" .SRCDIR}}" --output "{{.CLI_ARGS}}/transcriptions"
 
   study-course:
-    desc: 'Material didático (study.md) pra cada raw.md de <curso>/transcriptions/, via LLM API. Pula os já gerados. Uso: task study-course [LIMIT=1] -- "/caminho/do/curso"'
+    desc: 'Material didático de <curso>/transcriptions/ → <curso>/material-de-estudo/<aula>.md (um arquivo por aula, nome do vídeo — pronto pra upload). Pula os já gerados. Uso: task study-course [LIMIT=1] -- "/caminho/do/curso"'
     cmds:
-      - uv run study-material {{if .LIMIT}}--limit {{.LIMIT}} {{end}}--dir "{{.CLI_ARGS}}/transcriptions"
+      - uv run study-material {{if .LIMIT}}--limit {{.LIMIT}} {{end}}--dir "{{.CLI_ARGS}}/transcriptions" --output-dir "{{.CLI_ARGS}}/material-de-estudo"
 
   # ─── Transcrição YouTube ──────────────────────────────────────────────────
 

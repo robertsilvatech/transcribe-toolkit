@@ -207,6 +207,9 @@ uv run local-transcribe call.mp4 --word-timestamps
 
 # Testar: transcreve só N arquivos e para (skips não contam — rodadas seguintes continuam de onde parou)
 uv run local-transcribe --dir ~/curso --limit 1
+
+# Paralelizar via API: até N arquivos simultâneos (ignorado no engine local, que compartilha a GPU)
+uv run local-transcribe --dir ~/curso --api --workers 10
 ```
 
 Extensões aceitas: `.mp4`, `.mov`, `.mkv` (vídeo, extrai áudio via ffmpeg), `.m4a`, `.mp3`, `.wav` (áudio, sem extração). Output base resolvido na ordem: flag `--output` > env var `LOCAL_TRANSCRIBE_OUTPUT` > `config.yaml` (`local_transcribe.default_output`) > erro explícito.
@@ -263,6 +266,9 @@ uv run study-material ~/curso/transcriptions/aula01/raw.md
 # Batch: varre recursivamente por raw.md, pula os que já têm study.md
 uv run study-material --dir ~/curso/transcriptions
 
+# Pasta única pronta pra upload: um <nome-da-aula>.md por aula
+uv run study-material --dir ~/curso/transcriptions --output-dir ~/curso/material-de-estudo
+
 # Testar 1 aula antes do lote inteiro
 uv run study-material --dir ~/curso/transcriptions --limit 1
 
@@ -307,7 +313,8 @@ Manual trigger only — sem auto-export, sem watch. Você decide quando exportar
 Procedimentos operacionais passo-a-passo (pré-checagens, teste com 1 aula, lote, verificação, troubleshooting) em [runbooks/](runbooks/):
 
 - [01 — Transcrição de curso EAD](runbooks/01-transcricao-curso.md)
-- [02 — Material didático (study.md)](runbooks/02-material-didatico.md)
+- [02 — Material didático (material-de-estudo/)](runbooks/02-material-didatico.md)
+- [03 — Curso gravado por você (ciclo incremental)](runbooks/03-curso-gravado.md)
 
 ## Configuração
 

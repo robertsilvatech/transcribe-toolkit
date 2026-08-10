@@ -93,6 +93,7 @@ uv run local-transcribe aula01.mp4 --force                    # re-transcreve (n
 uv run local-transcribe --dir ~/curso --no-date               # pasta sem prefixo de data (só o slug)
 uv run local-transcribe call.mp4 --word-timestamps            # timestamps por palavra no raw_whisper.json
 uv run local-transcribe --dir ~/curso --limit 1               # testa 1 aula e para (skips não contam)
+uv run local-transcribe --dir ~/curso --api --workers 10      # até 10 em paralelo (só com --api)
 ```
 
 Extensões aceitas: `.mp4`, `.mov`, `.mkv` (vídeo, extrai áudio via ffmpeg), `.m4a`, `.mp3`, `.wav` (áudio, sem extração).
@@ -134,6 +135,7 @@ Config em `config.yaml`, seção `translate:`. Cascata: CLI flags > config.yaml 
 ```bash
 uv run study-material raw.md                          # arquivo único → study.md ao lado
 uv run study-material --dir <curso>/transcriptions    # batch: varre por raw.md, pula os que já têm study.md
+uv run study-material --dir ... --output-dir <curso>/material-de-estudo   # um <aula>.md por aula numa pasta única (upload)
 uv run study-material --dir ... --limit 1             # testa 1 e para
 uv run study-material raw.md --provider openai        # override provider
 uv run study-material raw.md --force                  # re-gera
@@ -141,7 +143,7 @@ uv run study-material raw.md --force                  # re-gera
 
 Transforma transcrição bruta em documento de estudo Markdown (tópicos/subtópicos numerados, cada conceito técnico como subtópico autossuficiente, blocos de código, destaques 💡 dica / ⚠️ erro comum / 🗣️ relato do professor). System prompt em `study_material/prompt.md` — editável sem tocar em código.
 
-Output: `study.md` na mesma pasta do input. Config em `config.yaml`, seção `study_material:`. Cascata: CLI flags > config.yaml > fallback hardcoded.
+Output: `study.md` na mesma pasta do input, ou — com `--output-dir` — `<nome-da-pasta-da-transcrição>.md` dentro do diretório indicado (a task `study-course` usa esse modo: `<curso>/material-de-estudo/<aula>.md`, um arquivo por aula com o nome do vídeo, pronto pra upload). Config em `config.yaml`, seção `study_material:`. Cascata: CLI flags > config.yaml > fallback hardcoded.
 
 ## Pipeline end-to-end (run.sh)
 

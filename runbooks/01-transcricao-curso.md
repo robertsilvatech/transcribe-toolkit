@@ -51,9 +51,10 @@ Critérios de aceite: texto legível no idioma certo, `language` correto, `durat
 ## Etapa 2 — Rodar o lote inteiro
 
 ```bash
-task transcribe-course-api -- "$CURSO"
+task transcribe-course-api WORKERS=10 -- "$CURSO"
 ```
 
+- `WORKERS=10` transcreve até 10 aulas em paralelo (só no modo API, que é limitado por rede — um curso de ~6h cai de ~40min pra ~5min). Omitir = sequencial.
 - A aula da Etapa 1 será **pulada** (skip por `source_path` no meta.json).
 - Pode interromper (Ctrl+C) e re-rodar à vontade: continua de onde parou.
 - Saída esperada ao final: `Resumo: N transcritos, M pulados, 0 com erro.`
@@ -75,9 +76,11 @@ for d in "$CURSO/transcriptions"/*/; do [ -f "$d/raw.md" ] || echo "INCOMPLETA: 
 
 | Cenário | Comando |
 |---|---|
+| Curso gravado por você (vídeos fora de `videos/`, ex: `aulas-editadas/`) | `task transcribe-course-api SRCDIR=aulas-editadas -- "$CURSO"` — cria `transcriptions/` na raiz do curso, espelhando os módulos |
 | Transcrever local (mlx, sem custo de API, PT forçado) | `task transcribe-course -- "$CURSO"` |
 | Pasta avulsa fora da convenção de curso | `task transcribe-local-batch-api NODATE=1 -- "/caminho/pasta"` (sai no `default_output` do config.yaml) |
 | Timestamps por palavra (calls/reuniões) | adicionar `WORDS=1` a qualquer task acima |
+| Paralelizar (só tasks `*-api`) | adicionar `WORKERS=10` — skips resolvidos antes, `LIMIT` continua valendo |
 | Re-transcrever uma aula específica | `uv run local-transcribe "$CURSO/videos/<aula>.mp4" --api --no-date --output "$CURSO/transcriptions" --force` |
 
 ## Troubleshooting

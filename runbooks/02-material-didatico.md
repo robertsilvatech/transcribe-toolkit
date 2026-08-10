@@ -1,6 +1,6 @@
-# Runbook 02 — Material didático (study.md)
+# Runbook 02 — Material didático
 
-**Objetivo:** gerar, para cada aula transcrita, um `study.md` organizado em tópicos/subtópicos (com 💡 dicas, ⚠️ erros comuns, 🗣️ relatos do professor) ao lado do `raw.md`.
+**Objetivo:** gerar, para cada aula transcrita, um material de estudo organizado em tópicos/subtópicos (com 💡 dicas, ⚠️ erros comuns, 🗣️ relatos do professor) em `$CURSO/material-de-estudo/<nome-da-aula>.md` — um arquivo por aula, com o mesmo nome do vídeo, pronto pra subir na plataforma.
 
 **Pré-requisito:** Runbook 01 concluído (`$CURSO/transcriptions/*/raw.md` existem).
 
@@ -26,18 +26,18 @@ grep -A2 "^study_material:" config.yaml
 task study-course LIMIT=1 -- "$CURSO"
 ```
 
-O que a task faz: `study-material --limit 1 --dir "$CURSO/transcriptions"` — varre por `raw.md`, pula quem já tem `study.md`.
+O que a task faz: `study-material --limit 1 --dir "$CURSO/transcriptions" --output-dir "$CURSO/material-de-estudo"` — varre por `raw.md` e grava `<nome-da-aula>.md` na pasta única.
 
 **Verificar o resultado:**
 
 ```bash
-SUB=$(ls -d "$CURSO/transcriptions"/*/ | head -1)
-head -40 "${SUB}study.md"
+ls "$CURSO/material-de-estudo"          # 1 arquivo com o nome do vídeo
+head -40 "$CURSO/material-de-estudo"/*.md
 ```
 
 Critérios de aceite: título coerente com a aula, seções numeradas, comandos citados em blocos de código, sem texto de comentário fora do documento (tipo "Aqui está o material...").
 
-**Não gostou do formato?** Edite o prompt em [study_material/prompt.md](../study_material/prompt.md) (não precisa mexer em código) e re-gere: `uv run study-material "${SUB}raw.md" --force`. Repita até aprovar, só então rode o lote.
+**Não gostou do formato?** Edite o prompt em [study_material/prompt.md](../study_material/prompt.md) (não precisa mexer em código), apague o `.md` gerado e re-rode a task. Repita até aprovar, só então rode o lote.
 
 ## Etapa 2 — Rodar o lote inteiro
 
@@ -45,18 +45,21 @@ Critérios de aceite: título coerente com a aula, seções numeradas, comandos 
 task study-course -- "$CURSO"
 ```
 
-- A aula da Etapa 1 será pulada (`study.md` já existe).
+- A aula da Etapa 1 será pulada (o `.md` dela já existe em `material-de-estudo/`).
 - Interrompível e re-executável sem custo duplicado.
 - Saída esperada: `Resumo: N gerados, M pulados, 0 com erro.`
 
 ## Etapa 3 — Verificação final
 
 ```bash
-# Todo raw.md tem seu study.md?
-for d in "$CURSO/transcriptions"/*/; do [ -f "$d/study.md" ] || echo "FALTANDO: $d"; done
+# Nº de materiais == nº de transcrições?
+ls "$CURSO/transcriptions"/*/raw.md | wc -l
+ls "$CURSO/material-de-estudo"/*.md | wc -l
 
 # Amostragem de qualidade: abrir 2-3 no Obsidian/editor e ler o Objetivo + Conclusão
 ```
+
+Pronto: a pasta `material-de-estudo/` inteira pode ser enviada pra plataforma.
 
 ---
 
@@ -64,10 +67,10 @@ for d in "$CURSO/transcriptions"/*/; do [ -f "$d/study.md" ] || echo "FALTANDO: 
 
 | Cenário | Comando |
 |---|---|
-| Uma aula avulsa | `uv run study-material /caminho/raw.md` |
+| Uma aula avulsa (sem pasta única — study.md ao lado do raw.md) | `uv run study-material /caminho/raw.md` |
 | Gerar a partir da tradução (curso em EN já traduzido) | `uv run study-material /caminho/raw_pt-br.md` |
-| Provider mais barato (gpt-4.1-mini) | `task study-course` não expõe; usar `uv run study-material --dir "$CURSO/transcriptions" --provider openai` |
-| Re-gerar tudo (após mudar o prompt) | `uv run study-material --dir "$CURSO/transcriptions" --force` |
+| Provider mais barato (gpt-4.1-mini) | `task study-course` não expõe; usar `uv run study-material --dir "$CURSO/transcriptions" --output-dir "$CURSO/material-de-estudo" --provider openai` |
+| Re-gerar tudo (após mudar o prompt) | `uv run study-material --dir "$CURSO/transcriptions" --output-dir "$CURSO/material-de-estudo" --force` |
 
 ## Troubleshooting
 
