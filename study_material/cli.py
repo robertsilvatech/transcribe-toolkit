@@ -41,9 +41,19 @@ def _collect_inputs(positional: list[str], dir_path: str | None) -> list[Path]:
     return inputs
 
 
-def _process_one(input_path: Path, cfg: dict, force: bool) -> tuple[str, str]:
-    """Retorna (status, detail) com status 'ok' | 'skip' | 'error'."""
-    output_path = input_path.parent / OUTPUT_NAME
+def _process_one(
+    input_path: Path, cfg: dict, force: bool, output_dir: Path | None = None
+) -> tuple[str, str]:
+    """Retorna (status, detail) com status 'ok' | 'skip' | 'error'.
+
+    Sem `output_dir`: escreve study.md ao lado do input. Com `output_dir`:
+    escreve <nome-da-aula>.md dentro dele (nome da aula = nome da pasta da
+    transcrição, que no fluxo de curso é o slug do vídeo).
+    """
+    if output_dir is not None:
+        output_path = output_dir / f"{input_path.parent.name}.md"
+    else:
+        output_path = input_path.parent / OUTPUT_NAME
     if output_path.exists() and not force:
         return ("skip", str(output_path))
 
@@ -61,6 +71,7 @@ def _process_one(input_path: Path, cfg: dict, force: bool) -> tuple[str, str]:
     except Exception as e:
         return ("error", f"Erro durante a geração: {e}")
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(material, encoding="utf-8")
     return ("ok", str(output_path))
 
@@ -95,6 +106,17 @@ def main():
         "--model",
         metavar="MODEL",
         help="Modelo a usar (default: config.yaml ou default do provider)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Grava os materiais como <nome-da-aula>.md dentro deste diretório "
+            "(nome da aula = nome da pasta da transcrição), em vez de study.md "
+            "ao lado de cada raw.md. Útil pra juntar tudo numa pasta única "
+            "pronta pra upload."
+        ),
     )
     parser.add_argument(
         "--limit",
@@ -136,13 +158,17 @@ def main():
     cfg = resolve_config(provider=args.provider, model=args.model)
     print(f"🧠  Engine: {cfg['provider']}/{cfg['model']}")
 
+    output_dir = None
+    if args.output_dir:
+        output_dir = Path(args.output_dir).expanduser().resolve()
+
     total = len(inputs)
     stats = {"ok": 0, "skip": 0, "error": 0}
     processed = 0  # gerações efetivas (ok/error) — skips não contam pro --limit
 
     for i, input_path in enumerate(inputs, 1):
         print(f"[{i}/{total}] {input_path.parent.name}/{input_path.name}")
-        status, detail = _process_one(input_path, cfg, args.force)
+        status, detail = _process_one(input_path, cfg, args.force, output_dir=output_dir)
         stats[status] += 1
         if status == "ok":
             print(f"    ✓ {detail}")
