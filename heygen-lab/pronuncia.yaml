@@ -1,0 +1,19 @@
+# Dicionário de pronúncia — termo real → como o TTS deve ler.
+#
+# Aplicado SOMENTE no texto que vai pro ElevenLabs (--el). O roteiro e a
+# legenda mantêm a grafia verdadeira. Casa palavra inteira, sem diferenciar
+# maiúscula. Termo escrito ERRADO de propósito (piada do typo) não está aqui,
+# então passa reto — é assim que se preserva o erro intencional.
+#
+# Validado de ouvido pelo Robert em 2026-08-15 (testes 11a/11b — ambos ok;
+# kubectl ficou com a grafia A, que é como ele fala).
+
+kubectl: kiúb cê tê éle
+describe: discráibi
+nginx: engine écs
+explain: explêin
+yaml: iámel
+dry-run: drái rãn
+Rocket: Rókit
+Marvvila: Marvlah
+Marvila: Marvlah
