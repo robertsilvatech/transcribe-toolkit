@@ -8,7 +8,8 @@ Módulos **ingestores** (yt_transcribe, local_transcribe) são pastas independen
 
 ```
 transcribe_core/   # núcleo compartilhado entre ingestores (transcrição + formatação)
-├── transcriber.py     # transcribe(audio_path, use_api, model) — mlx-whisper ou OpenAI API + chunking
+├── transcriber.py     # transcribe(audio_path, use_api, model, engine) — mlx-whisper, whisperx ou OpenAI API + chunking
+├── whisperx_worker.py # worker standalone do engine whisperx (roda em subprocess via uv, Python 3.12)
 ├── formatter.py       # save_outputs() — escreve raw.md, raw_timestamps.md, raw_whisper.json, meta.json
 └── slugify.py         # slugify(text) — normaliza títulos pra nomes de pasta
 
@@ -65,6 +66,7 @@ uv run yt-transcribe <url> --output <dir> --api        # via OpenAI Whisper API
 uv run yt-transcribe <url> --output <dir> --no-ffmpeg   # sem ffmpeg
 uv run yt-transcribe <url> --output <dir> --cookies-from-browser chrome   # vídeos não listados / bot-check
 uv run yt-transcribe <url> --output <dir> --force       # ignora skip e re-baixa/re-transcreve
+uv run yt-transcribe <url> --output <dir> --engine whisperx   # faster-whisper/CTranslate2 em CPU (ver local_transcribe)
 ```
 
 Use `--cookies-from-browser <browser>` quando o yt-dlp retornar "Sign in to confirm you're not a bot" (comum em vídeos não listados ou com restrição). Valores aceitos: `chrome`, `firefox`, `safari`, `brave`, `edge`, etc.
@@ -94,7 +96,13 @@ uv run local-transcribe --dir ~/curso --no-date               # pasta sem prefix
 uv run local-transcribe call.mp4 --word-timestamps            # timestamps por palavra no raw_whisper.json
 uv run local-transcribe --dir ~/curso --limit 1               # testa 1 aula e para (skips não contam)
 uv run local-transcribe --dir ~/curso --api --workers 10      # até 10 em paralelo (só com --api)
+uv run local-transcribe --dir ~/curso --engine whisperx       # faster-whisper/CTranslate2 em CPU (sem API)
+uv run local-transcribe aula01.mp4 --engine whisperx --model large-v3   # reusa modelo já cacheado no HF
 ```
+
+Engines: `mlx` (padrão, GPU via mlx-whisper), `whisperx` (CPU via faster-whisper/CTranslate2) e `--api` (OpenAI). O engine whisperx roda num subprocess isolado (`uv run --python 3.12 --with whisperx`) porque o whisperx exige Python <3.14 e o venv do projeto roda 3.14+ — a primeira execução resolve o ambiente e baixa o modelo (cacheados depois). Vantagens: VAD pyannote (pré-segmenta fala e pula silêncio → rápido e sem alucinações de silêncio) e, com `--word-timestamps`, alinhamento forçado wav2vec2 (bordas de palavra medidas contra o áudio; cada word ganha `score` em vez de `probability`). Default de `--model` no whisperx: `large-v3-turbo` (nomes faster-whisper). Não suporta `--multilang`; `--workers` roda sequencial como no mlx. Avisos de `torchcodec/libavutil` no load são inofensivos (fallback interno do whisperx).
+
+**WhisperX em Apple Silicon (M1+):** roda sempre em **CPU com quantização int8** — o CTranslate2 (backend do faster-whisper) não tem caminho Metal, e pedir `mps` falha no load em vez de cair pra CPU (é daí que vem o mito de "whisperx não funciona no Mac"). A seleção de device (`cuda/float16` se houver, senão `cpu/int8`) e o `batch_size=8` já estão resolvidos em `transcribe_core/whisperx_worker.py` (`_device()`), no mesmo padrão da skill edvid; a velocidade em CPU vem do int8 + decodificação em batch dos trechos de fala pré-segmentados pelo VAD (~tempo real ou melhor com large-v3; custo fixo ~18s de load de modelo por arquivo). Não tentar forçar GPU/MPS nem instalar whisperx no venv do projeto — o subprocess via uv é o caminho suportado.
 
 Extensões aceitas: `.mp4`, `.mov`, `.mkv` (vídeo, extrai áudio via ffmpeg), `.m4a`, `.mp3`, `.wav` (áudio, sem extração).
 
@@ -220,7 +228,7 @@ Output: `raw_<lang>.md` na mesma pasta. Usar para tradução interativa. Para au
 ## Stack
 
 - Python 3.13+, uv
-- yt-dlp, mlx-whisper (opcional, macOS 14+), OpenAI API, Anthropic API, pydub, pyyaml
+- yt-dlp, mlx-whisper (opcional, macOS 14+), whisperx (opcional, via subprocess `uv run` — não é dependência do venv), OpenAI API, Anthropic API, pydub, pyyaml
 
 ## Convenções
 

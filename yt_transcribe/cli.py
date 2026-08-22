@@ -44,13 +44,27 @@ def main():
     parser.add_argument(
         "--api",
         action="store_true",
-        help="Usar OpenAI Whisper API em vez do mlx-whisper local (requer OPENAI_API_KEY)",
+        help="Usar OpenAI Whisper API em vez do engine local (requer OPENAI_API_KEY)",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["mlx", "whisperx"],
+        default="mlx",
+        help=(
+            "Engine de transcrição local. 'mlx' (padrão) usa mlx-whisper na "
+            "GPU; 'whisperx' usa faster-whisper/CTranslate2 em CPU via "
+            "subprocess (uv run --with whisperx). Ignorado com --api."
+        ),
     )
     parser.add_argument(
         "--model",
-        default="medium",
+        default=None,
         metavar="MODEL",
-        help="Modelo mlx-whisper a usar (padrão: medium). Ex: large-v3. Ignorado com --api.",
+        help=(
+            "Modelo Whisper a usar. Engine mlx: 'medium' (padrão), "
+            "'large-v3', etc. Engine whisperx: 'large-v3-turbo' (padrão), "
+            "'large-v3', 'medium'. Ignorado com --api."
+        ),
     )
     parser.add_argument(
         "--cookies-from-browser",
@@ -85,7 +99,21 @@ def main():
         sys.exit(1)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    engine = "openai-whisper-api" if args.api else f"mlx-whisper/{args.model}"
+    # default de --model depende do engine (nomes MLX vs faster-whisper)
+    if args.model is None:
+        args.model = (
+            "large-v3-turbo" if (args.engine == "whisperx" and not args.api) else "medium"
+        )
+
+    if args.api:
+        engine = "openai-whisper-api"
+        engine_kind = "api"
+    elif args.engine == "whisperx":
+        engine = f"whisperx/{args.model}"
+        engine_kind = "whisperx"
+    else:
+        engine = f"mlx-whisper/{args.model}"
+        engine_kind = "mlx"
 
     # Skip check: se já existe pasta com transcrição válida pra essa URL, retorna.
     if not args.force:
@@ -152,7 +180,9 @@ def main():
         # Etapa 2: Transcrição
         print(f"🎙  Transcrevendo com {engine}...")
         try:
-            result = transcribe(audio_path, use_api=args.api, model=args.model)
+            result = transcribe(
+                audio_path, use_api=args.api, model=args.model, engine=engine_kind
+            )
         except ImportError as e:
             print(f"\nErro: {e}", file=sys.stderr)
             sys.exit(1)

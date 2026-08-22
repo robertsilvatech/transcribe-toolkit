@@ -1,7 +1,18 @@
+import json
 import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 MAX_API_SIZE_MB = 24  # margem de segurança abaixo do limite de 25MB da OpenAI
+
+# whisperx exige Python >=3.10,<3.14 (torch não publica wheels cp314), e o
+# venv deste projeto roda 3.14+. Por isso o engine whisperx é executado num
+# subprocess com ambiente efêmero do uv (cacheado após a primeira resolução),
+# nunca importado neste processo.
+WHISPERX_PYTHON = "3.12"
+WHISPERX_SPEC = "whisperx>=3.8,<4"
 
 
 # Parâmetros anti-alucinação para mlx_whisper.transcribe.
@@ -213,6 +224,53 @@ def _transcribe_local_chunked(
     }
 
 
+def _transcribe_whisperx(
+    audio_path: Path,
+    model: str = "large-v3-turbo",
+    language: str | None = None,
+    word_timestamps: bool = False,
+) -> dict:
+    """Transcreve via WhisperX (faster-whisper/CTranslate2 + VAD pyannote) num
+    subprocess isolado — ver comentário em WHISPERX_PYTHON e o docstring de
+    `whisperx_worker.py`. O worker herda stdout/stderr pra mostrar progresso;
+    o resultado volta por arquivo JSON temporário (evita poluição de stdout).
+
+    Primeira execução resolve o ambiente e baixa o modelo do Hugging Face
+    (cacheados pelo uv e pelo HF nas execuções seguintes).
+    """
+    uv = shutil.which("uv")
+    if uv is None:
+        raise EnvironmentError(
+            "uv não encontrado no PATH — o engine whisperx roda via "
+            "`uv run --with whisperx`. Instale o uv ou use o engine mlx/--api."
+        )
+    worker = Path(__file__).with_name("whisperx_worker.py")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out_json = Path(tmp) / "result.json"
+        cmd = [
+            uv, "run", "--quiet", "--no-project",
+            "--python", WHISPERX_PYTHON,
+            "--with", WHISPERX_SPEC,
+            str(worker),
+            str(audio_path),
+            "--output", str(out_json),
+            "--model", model,
+        ]
+        if language:
+            cmd += ["--language", language]
+        if word_timestamps:
+            cmd += ["--word-timestamps"]
+
+        proc = subprocess.run(cmd)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"whisperx worker falhou (exit {proc.returncode}) — "
+                "ver mensagens acima."
+            )
+        return json.loads(out_json.read_text(encoding="utf-8"))
+
+
 def _distribute_api_words(result: dict) -> None:
     """Distribui a lista top-level `words` da API (verbose_json com
     granularidade word) para dentro de cada segment, casando por janela de
@@ -361,6 +419,7 @@ def transcribe(
     language: str | None = None,
     multilang: bool = False,
     word_timestamps: bool = False,
+    engine: str | None = None,
 ) -> dict:
     """
     Transcreve o áudio e retorna verbose JSON com segments.
@@ -368,7 +427,10 @@ def transcribe(
     Args:
         audio_path: Caminho para o arquivo de áudio .mp3
         use_api: Se True, usa OpenAI Whisper API. Caso contrário, mlx-whisper local.
-        model: Modelo mlx-whisper (ex: 'medium', 'large-v3'). Ignorado com --api.
+        model: Modelo Whisper. No engine mlx aceita nome curto ('medium',
+            'large-v3') ou caminho local de modelo MLX; no whisperx, nome
+            faster-whisper ('large-v3-turbo', 'large-v3', 'medium').
+            Ignorado com engine api.
         language: Código de idioma ISO-639-1 (ex: 'pt', 'en', 'es') para forçar
             o idioma. None deixa o Whisper detectar nos primeiros 30s. Ignorado
             com --api (a API detecta automaticamente) e com `multilang=True`.
@@ -381,12 +443,36 @@ def transcribe(
             Funciona no engine local (mlx) E na API (`probability` só existe no
             mlx). Na API adiciona latência à chamada. Nota: no mlx, o start/end
             de cada segment é reajustado pros bounds da primeira/última word.
+            No whisperx, ativa a passada de alinhamento forçado (wav2vec2) e
+            cada word ganha `score` em vez de `probability`.
+        engine: 'mlx' (default), 'whisperx' ou 'api'. None deriva de
+            `use_api` (backcompat com chamadores antigos). 'whisperx' roda
+            faster-whisper/CTranslate2 em subprocess isolado via uv — rápido
+            em CPU, não suporta `multilang`.
 
     Returns:
         dict com keys: text, segments (list com start/end/text), language
     """
-    if use_api:
+    if engine is None:
+        engine = "api" if use_api else "mlx"
+
+    if engine == "api":
         return _transcribe_api(audio_path, word_timestamps=word_timestamps)
+
+    if engine == "whisperx":
+        if multilang:
+            raise ValueError(
+                "multilang não é suportado no engine whisperx — use o engine mlx."
+            )
+        return _transcribe_whisperx(
+            audio_path,
+            model=model,
+            language=language,
+            word_timestamps=word_timestamps,
+        )
+
+    if engine != "mlx":
+        raise ValueError(f"Engine desconhecido: {engine!r} (use 'mlx', 'whisperx' ou 'api')")
 
     if not _check_mlx_whisper():
         raise ImportError(

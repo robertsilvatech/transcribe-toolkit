@@ -136,6 +136,7 @@ def _process_one(
     trim_silence_minutes: float | None = None,
     no_date: bool = False,
     word_timestamps: bool = False,
+    engine_kind: str | None = None,
 ) -> tuple[str, str]:
     """Process a single input. Returns (status, detail) where status is
     'ok' | 'skip' | 'error'.
@@ -189,6 +190,7 @@ def _process_one(
             language=language,
             multilang=multilang,
             word_timestamps=word_timestamps,
+            engine=engine_kind,
         )
     except (ImportError, EnvironmentError) as e:
         return ("error", str(e))
@@ -262,17 +264,30 @@ def main():
     parser.add_argument(
         "--api",
         action="store_true",
-        help="Usar OpenAI Whisper API em vez do mlx-whisper local (requer OPENAI_API_KEY).",
+        help="Usar OpenAI Whisper API em vez do engine local (requer OPENAI_API_KEY).",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["mlx", "whisperx"],
+        default="mlx",
+        help=(
+            "Engine de transcrição local. 'mlx' (padrão) usa mlx-whisper na "
+            "GPU. 'whisperx' usa faster-whisper/CTranslate2 em CPU num "
+            "subprocess isolado (uv run --with whisperx), com VAD pyannote "
+            "(pula silêncio, menos alucinação) e — com --word-timestamps — "
+            "alinhamento forçado wav2vec2. Ignorado com --api."
+        ),
     )
     parser.add_argument(
         "--model",
-        default="medium",
+        default=None,
         metavar="MODEL",
         help=(
-            "Modelo mlx-whisper a usar. Pode ser um nome curto "
-            "('tiny', 'base', 'small', 'medium', 'large-v3') OU um caminho "
-            "para um diretório local de modelo MLX já convertido. "
-            "Padrão: medium. Ignorado com --api."
+            "Modelo Whisper a usar. Engine mlx: nome curto ('tiny', 'base', "
+            "'small', 'medium', 'large-v3') OU caminho de modelo MLX local "
+            "(padrão: medium). Engine whisperx: nome faster-whisper "
+            "('large-v3-turbo', 'large-v3', 'medium'; padrão: "
+            "large-v3-turbo). Ignorado com --api."
         ),
     )
     lang_group = parser.add_mutually_exclusive_group()
@@ -389,14 +404,36 @@ def main():
         print("Nenhum arquivo de mídia suportado encontrado.", file=sys.stderr)
         sys.exit(1)
 
+    if args.multilang and args.engine == "whisperx":
+        print(
+            "Erro: --multilang não é suportado com --engine whisperx "
+            "(re-detecção por janela é do engine mlx).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    # default de --model depende do engine: 'medium' no mlx (nome MLX),
+    # 'large-v3-turbo' no whisperx (nome faster-whisper, rápido em CPU)
+    if args.model is None:
+        args.model = (
+            "large-v3-turbo" if (args.engine == "whisperx" and not args.api) else "medium"
+        )
+
     if args.api:
         engine = "openai-whisper-api"
+        engine_kind = "api"
+    elif args.engine == "whisperx":
+        engine = f"whisperx/{args.model}"
+        if args.language:
+            engine += f"+lang={args.language}"
+        engine_kind = "whisperx"
     else:
         engine = f"mlx-whisper/{args.model}"
         if args.multilang:
             engine += "+multilang"
         elif args.language:
             engine += f"+lang={args.language}"
+        engine_kind = "mlx"
 
     sub = args.subfolder.strip().strip("/") if args.subfolder else None
     if sub and ("/" in sub or "\\" in sub or sub.startswith(".")):
@@ -417,8 +454,9 @@ def main():
     workers = args.workers
     if workers > 1 and not args.api:
         print(
-            "[workers] engine local (mlx) compartilha a GPU — paralelismo não "
-            "ajuda; usando --workers 1. Use --api pra paralelizar."
+            "[workers] engines locais (mlx compartilha a GPU, whisperx satura "
+            "a CPU) rodam sequencial; usando --workers 1. Use --api pra "
+            "paralelizar."
         )
         workers = 1
 
@@ -447,6 +485,7 @@ def main():
             trim_silence_minutes=args.trim_silence,
             no_date=args.no_date,
             word_timestamps=args.word_timestamps,
+            engine_kind=engine_kind,
         )
 
     if workers > 1:
